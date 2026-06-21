@@ -16,11 +16,13 @@ import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.datasets import load_breast_cancer
+from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import ConfusionMatrixDisplay, accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import MinMaxScaler, Normalizer, RobustScaler, StandardScaler
 from sklearn.svm import SVC
@@ -38,6 +40,9 @@ class BenchmarkArtifacts:
 
     results_table: pd.DataFrame
     summary_table: pd.DataFrame
+    predictions: dict  # {(scaler_name, model_name): np.ndarray of y_pred}
+    y_test: np.ndarray
+    scaled_test: dict  # {scaler_name: np.ndarray} for PCA
 
 
 def project_root() -> Path:
@@ -127,6 +132,7 @@ def build_models() -> dict[str, object]:
         "knn": KNeighborsClassifier(n_neighbors=9),
         "svm_rbf": SVC(kernel="rbf", gamma="scale", random_state=SEED),
         "random_forest": RandomForestClassifier(n_estimators=300, random_state=SEED),
+        "mlp": MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=500, random_state=SEED),
     }
 
 
@@ -152,10 +158,15 @@ def evaluate_scalers() -> BenchmarkArtifacts:
     )
 
     rows: list[dict[str, float | str]] = []
+    preds: dict[tuple[str, str], np.ndarray] = {}
+    scaled_test: dict[str, np.ndarray] = {}
     scalers = build_scalers()
     models = build_models()
 
     for scaler_name, scaler in scalers.items():
+        fitted_scaler = clone(scaler).fit(X_train)
+        scaled_test[scaler_name] = fitted_scaler.transform(X_test)
+
         for model_name, model in models.items():
             pipeline = Pipeline(
                 steps=[
@@ -164,12 +175,13 @@ def evaluate_scalers() -> BenchmarkArtifacts:
                 ]
             )
             pipeline.fit(X_train, y_train)
-            predictions = pipeline.predict(X_test)
+            y_pred = pipeline.predict(X_test)
+            preds[(scaler_name, model_name)] = y_pred
             rows.append(
                 {
                     "scaler": scaler_name,
                     "model": model_name,
-                    "accuracy": accuracy_score(y_test, predictions),
+                    "accuracy": accuracy_score(y_test, y_pred),
                 }
             )
 
@@ -180,7 +192,13 @@ def evaluate_scalers() -> BenchmarkArtifacts:
         .rename(columns={"accuracy": "mean_accuracy"})
         .sort_values("mean_accuracy", ascending=False)
     )
-    return BenchmarkArtifacts(results_table=results, summary_table=summary)
+    return BenchmarkArtifacts(
+        results_table=results,
+        summary_table=summary,
+        predictions=preds,
+        y_test=y_test.to_numpy(),
+        scaled_test=scaled_test,
+    )
 
 
 def save_benchmark_tables(artifacts: BenchmarkArtifacts) -> tuple[Path, Path]:
@@ -213,6 +231,89 @@ def plot_model_scores(results: pd.DataFrame, output_path: Path | None = None) ->
     ax.set_ylabel("Accuracy")
     ax.set_ylim(0.85, 1.01)
     ax.legend(title="Scaler", ncol=2)
+    fig.tight_layout()
+    fig.savefig(figure_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return figure_path
+
+
+def plot_confusion_matrices(
+    artifacts: BenchmarkArtifacts,
+    output_dir: Path | None = None,
+) -> list[Path]:
+    """Save one confusion-matrix grid per scaler, with one panel per model."""
+
+    ensure_directories()
+    results_dir = output_dir or project_root() / "results"
+    model_names = list(build_models().keys())
+    scaler_names = list(build_scalers().keys())
+    saved: list[Path] = []
+
+    for scaler_name in scaler_names:
+        n = len(model_names)
+        fig, axes = plt.subplots(1, n, figsize=(4 * n, 4))
+        fig.suptitle(f"Confusion Matrices - {scaler_name}", fontsize=13)
+        for ax, model_name in zip(axes, model_names):
+            y_pred = artifacts.predictions[(scaler_name, model_name)]
+            ConfusionMatrixDisplay.from_predictions(
+                artifacts.y_test,
+                y_pred,
+                ax=ax,
+                colorbar=False,
+            )
+            ax.set_title(model_name.replace("_", "\n"), fontsize=9)
+        fig.tight_layout()
+        path = results_dir / f"confusion_matrices_{scaler_name}.png"
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        saved.append(path)
+
+    return saved
+
+
+def plot_pca_projections(
+    artifacts: BenchmarkArtifacts,
+    output_path: Path | None = None,
+) -> Path:
+    """Save 2D PCA scatter plots showing class separation under each scaler."""
+
+    ensure_directories()
+    figure_path = output_path or project_root() / "results" / "pca_projections.png"
+    scaler_names = list(artifacts.scaled_test.keys())
+    n = len(scaler_names)
+    ncols = 2
+    nrows = (n + 1) // 2
+    class_colors = ["#d62728", "#1f77b4"]
+    class_labels = ["malignant (0)", "benign (1)"]
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(12, 5 * nrows))
+    axes_flat = axes.flatten()
+
+    pca = PCA(n_components=2, random_state=SEED)
+    for idx, scaler_name in enumerate(scaler_names):
+        ax = axes_flat[idx]
+        components = pca.fit_transform(artifacts.scaled_test[scaler_name])
+        for class_val, color, label in zip([0, 1], class_colors, class_labels):
+            mask = artifacts.y_test == class_val
+            ax.scatter(
+                components[mask, 0],
+                components[mask, 1],
+                c=color,
+                label=label,
+                alpha=0.7,
+                s=30,
+                edgecolors="none",
+            )
+        var = pca.explained_variance_ratio_
+        ax.set_title(f"{scaler_name}  (PC1 {var[0]:.1%}, PC2 {var[1]:.1%})")
+        ax.set_xlabel("PC 1")
+        ax.set_ylabel("PC 2")
+        ax.legend(fontsize=8)
+
+    for idx in range(len(scaler_names), len(axes_flat)):
+        axes_flat[idx].set_visible(False)
+
+    fig.suptitle("PCA 2D Projection by Scaler", fontsize=14, y=1.01)
     fig.tight_layout()
     fig.savefig(figure_path, dpi=220, bbox_inches="tight")
     plt.close(fig)

@@ -42,12 +42,22 @@ The repository is also structured for repeatability under practical constraints.
 
 Another design goal is interpretability before complexity. Each new element in the workflow is expected to answer a concrete question, such as whether performance changed because of geometry, because of outlier treatment, or because of model sensitivity. That is why the project adds multiple diagnostics rather than a single aggregate metric.
 
-| <sub>#</sub> | <sub>Topic</sub> | <sub>What This Repo Covers</sub> | <sub>What This Repo Does Not Cover</sub> | <sub>Why</sub> |
-| --- | --- | --- | --- | --- |
-| <sub>1</sub> | <sub>Preprocessing</sub> | <sub>Z-score, min-max, robust, L2 normalization</sub> | <sub>All advanced transforms</sub> | <sub>Keep comparison interpretable</sub> |
-| <sub>2</sub> | <sub>Model Families</sub> | <sub>LR, KNN, SVM, RF, MLP</sub> | <sub>Large model zoo sweep</sub> | <sub>Show scaling sensitivity clearly</sub> |
-| <sub>3</sub> | <sub>Validation</sub> | <sub>Holdout plus repeated stratified CV</sub> | <sub>Nested CV or Bayesian HPO</sub> | <sub>Strong baseline rigor with low complexity</sub> |
-| <sub>4</sub> | <sub>Artifacts</sub> | <sub>CSV, score plot, PCA plot, confusion matrices</sub> | <sub>Interactive dashboards</sub> | <sub>Portable, versionable outputs</sub> |
+| <sub>#</sub> | <sub>Topic</sub> | <sub>Covered</sub> | <sub>Not Covered</sub> |
+| --- | --- | --- | --- |
+| <sub>1</sub> | <sub>Preprocessing</sub> | <sub>Z-score, min-max, robust, L2</sub> | <sub>Advanced transforms</sub> |
+| <sub>2</sub> | <sub>Models</sub> | <sub>LR, KNN, SVM, RF, MLP</sub> | <sub>Full model zoo</sub> |
+| <sub>3</sub> | <sub>Validation</sub> | <sub>Holdout + repeated CV</sub> | <sub>Nested CV, Bayesian HPO</sub> |
+| <sub>4</sub> | <sub>Artifacts</sub> | <sub>CSV, bar chart, PCA, conf. matrices</sub> | <sub>Interactive dashboards</sub> |
+
+> [!NOTE]
+> The table above maps project scope: what is covered and what is intentionally excluded to keep the comparison focused.
+
+| <sub>#</sub> | <sub>Topic</sub> | <sub>Why</sub> |
+| --- | --- | --- |
+| <sub>1</sub> | <sub>Preprocessing</sub> | <sub>Interpretable comparison</sub> |
+| <sub>2</sub> | <sub>Models</sub> | <sub>Show scaling sensitivity</sub> |
+| <sub>3</sub> | <sub>Validation</sub> | <sub>Baseline rigor, low complexity</sub> |
+| <sub>4</sub> | <sub>Artifacts</sub> | <sub>Portable, versionable outputs</sub> |
 
 > [!NOTE]
 > This table defines the project boundary so readers know exactly what claims are supported by the current code.
@@ -66,13 +76,24 @@ Another design goal is interpretability before complexity. Each new element in t
 
 The model-side sensitivity also differs substantially by algorithm family.
 
-| <sub>#</sub> | <sub>Model</sub> | <sub>Sensitivity to Scaling</sub> | <sub>Main Reason</sub> | <sub>Expected Impact</sub> |
-| --- | --- | --- | --- | --- |
-| <sub>1</sub> | <sub>Logistic Regression</sub> | <sub>High</sub> | <sub>Regularization and gradients depend on feature magnitude</sub> | <sub>Large convergence and coefficient stability gains</sub> |
-| <sub>2</sub> | <sub>KNN</sub> | <sub>Very High</sub> | <sub>Distance is the prediction rule</sub> | <sub>Strong metric changes likely</sub> |
-| <sub>3</sub> | <sub>SVM RBF</sub> | <sub>High</sub> | <sub>Kernel distance geometry</sub> | <sub>Boundary quality changes</sub> |
-| <sub>4</sub> | <sub>MLP</sub> | <sub>High</sub> | <sub>Optimization conditioning</sub> | <sub>Stability and performance changes</sub> |
-| <sub>5</sub> | <sub>Random Forest</sub> | <sub>Low</sub> | <sub>Split thresholds mostly unit-invariant</sub> | <sub>Usually smaller differences</sub> |
+| <sub>#</sub> | <sub>Model</sub> | <sub>Scaling Sensitivity</sub> | <sub>Reason</sub> |
+| --- | --- | --- | --- |
+| <sub>1</sub> | <sub>Logistic Regression</sub> | <sub>High</sub> | <sub>Regularization and gradients depend on magnitude</sub> |
+| <sub>2</sub> | <sub>KNN</sub> | <sub>Very High</sub> | <sub>Distance defines prediction</sub> |
+| <sub>3</sub> | <sub>SVM RBF</sub> | <sub>High</sub> | <sub>Kernel distance geometry</sub> |
+| <sub>4</sub> | <sub>MLP</sub> | <sub>High</sub> | <sub>Optimization conditioning</sub> |
+| <sub>5</sub> | <sub>Random Forest</sub> | <sub>Low</sub> | <sub>Splits mostly unit-invariant</sub> |
+
+> [!NOTE]
+> The table above shows sensitivity level and the core mechanical reason. See the table below for expected impact.
+
+| <sub>#</sub> | <sub>Model</sub> | <sub>Expected Impact of Good Scaling</sub> |
+| --- | --- | --- |
+| <sub>1</sub> | <sub>Logistic Regression</sub> | <sub>Better convergence, stable coefficients</sub> |
+| <sub>2</sub> | <sub>KNN</sub> | <sub>Strong accuracy shifts likely</sub> |
+| <sub>3</sub> | <sub>SVM RBF</sub> | <sub>Better class boundary quality</sub> |
+| <sub>4</sub> | <sub>MLP</sub> | <sub>Stability and performance gains</sub> |
+| <sub>5</sub> | <sub>Random Forest</sub> | <sub>Usually smaller differences</sub> |
 
 > [!NOTE]
 > This table explains why a single scaler can look excellent for one model and weak for another.

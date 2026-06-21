@@ -27,6 +27,8 @@ The code now supports both a holdout benchmark and a repeated stratified cross-v
 - Transformers and Attention Context
 - Drift and Update Policy
 - Experimental Protocol
+- Formula and Algorithm Deep Dive
+- Visual Explanations with PNG Artifacts
 - Results Snapshot
 - How to Run
 - Publishing and Contribution Files
@@ -35,6 +37,10 @@ The code now supports both a holdout benchmark and a repeated stratified cross-v
 ## Project Scope
 
 The core mission is to compare preprocessing choices, not to chase a single leaderboard metric. Z-score often looks simple, but it directly changes optimization geometry, regularization balance, and neighborhood structure depending on the model.
+
+The repository is also structured for repeatability under practical constraints. You can run one command and regenerate tabular outputs, diagnostics, and plots without manual post-processing. This makes the project useful for learning, peer review, and controlled extensions.
+
+Another design goal is interpretability before complexity. Each new element in the workflow is expected to answer a concrete question, such as whether performance changed because of geometry, because of outlier treatment, or because of model sensitivity. That is why the project adds multiple diagnostics rather than a single aggregate metric.
 
 | <sub>#</sub> | <sub>Topic</sub> | <sub>What This Repo Covers</sub> | <sub>What This Repo Does Not Cover</sub> | <sub>Why</sub> |
 | --- | --- | --- | --- | --- |
@@ -104,6 +110,10 @@ flowchart LR
 
 Z-score is a preprocessing transform step, not a post-training report step. In supervised learning it should be fit after split creation and before model fitting. At inference it must use the exact training-fitted parameters.
 
+In practice, this means the scaler is part of model definition, not an optional notebook cell. The safest implementation pattern is a single pipeline object that includes both preprocessing and estimator steps. That pattern keeps train, validation, test, and production transformations consistent.
+
+In production systems, the scaler should be versioned as an artifact tied to model version and data window. If a team retrains without updating or validating preprocessing artifacts, silent quality decay can happen even when model code has not changed.
+
 | <sub>#</sub> | <sub>Lifecycle Stage</sub> | <sub>Z-Score Action</sub> | <sub>Allowed Operation</sub> | <sub>Failure if Wrong</sub> |
 | --- | --- | --- | --- | --- |
 | <sub>1</sub> | <sub>Data split</sub> | <sub>Define train/val/test boundaries</sub> | <sub>No fitting yet</sub> | <sub>Leakage risk if fit before split</sub> |
@@ -119,6 +129,10 @@ Z-score is a preprocessing transform step, not a post-training report step. In s
 
 Logistic regression is usually one of the clearest beneficiaries of z-score on numeric tabular features. Scaling improves optimization conditioning and makes L1/L2 penalties operate on more comparable coefficient scales.
 
+Without scaling, one feature with a larger numerical range can dominate gradient updates and regularization behavior. This often causes slower convergence, unstable coefficient interpretation, and suboptimal calibration in probability outputs. Standardization makes optimizer steps more balanced across coordinates.
+
+A second practical benefit is comparability during model inspection. When features are standardized, coefficient magnitudes reflect predictive influence more consistently under regularization constraints. This does not make interpretation trivial, but it reduces unit-driven distortions.
+
 | <sub>#</sub> | <sub>Question</sub> | <sub>Answer</sub> | <sub>Practical Rule</sub> | <sub>Why</sub> |
 | --- | --- | --- | --- | --- |
 | <sub>1</sub> | <sub>When to scale for LR</sub> | <sub>Before model fitting</sub> | <sub>Use Pipeline with scaler then LR</sub> | <sub>Prevents leakage and keeps flow consistent</sub> |
@@ -132,6 +146,10 @@ Logistic regression is usually one of the clearest beneficiaries of z-score on n
 ## Transformers and Attention Context
 
 For many transformer systems, internal normalization layers (for example LayerNorm or RMSNorm) are part of model architecture, so external z-score is not automatically mandatory in the same way as classical tabular LR/KNN pipelines. For tabular transformer setups with heterogeneous numeric feature units, external feature scaling can still improve input stability.
+
+Attention mechanisms operate on projected representations, and these projections are followed by normalization blocks that stabilize hidden-state statistics. Because of this internal architecture, external feature z-scoring is often less central in tokenized NLP pipelines than in classical tabular ML. The preprocessing burden shifts toward tokenization, masking, and representation alignment.
+
+However, when transformers are used for mixed numeric tabular data, input scale heterogeneity can still propagate into early projection layers. In that setting, benchmarking with and without external scaling remains a strong engineering practice. The correct choice is empirical and task-specific, not ideological.
 
 | <sub>#</sub> | <sub>Context</sub> | <sub>External Z-Score Need</sub> | <sub>Primary Normalization Location</sub> | <sub>Guideline</sub> |
 | --- | --- | --- | --- | --- |
@@ -159,6 +177,10 @@ For many transformer systems, internal normalization layers (for example LayerNo
 
 The repository executes two evaluation tracks: a holdout track for diagnostics and a repeated stratified CV track for uncertainty-aware comparison.
 
+The holdout track exists because diagnostic figures require a fixed evaluation split for direct visual comparison. Confusion matrices and PCA scatter structure are easier to interpret when all scaler-model pairs are measured on the same held-out partition.
+
+The repeated CV track exists because single-split estimates can be noisy and sensitive to partition luck. Repeating stratified folds across multiple shuffles provides a stronger estimate of central tendency and spread, and enables confidence interval reporting for each scaler-model-dataset combination.
+
 | <sub>#</sub> | <sub>Track</sub> | <sub>Protocol</sub> | <sub>Datasets</sub> | <sub>Main Output</sub> |
 | --- | --- | --- | --- | --- |
 | <sub>1</sub> | <sub>Holdout</sub> | <sub>Single stratified split</sub> | <sub>breast_cancer</sub> | <sub>per-model scores plus plots</sub> |
@@ -175,6 +197,120 @@ $$
 
 > [!NOTE]
 > Here, $\bar{x}$ is mean CV accuracy, $s$ is sample standard deviation across splits, and $n$ is number of split scores.
+
+## Formula and Algorithm Deep Dive
+
+The formulas below are the operational math behind every preprocessing step in this repository. They are included to make each design choice explicit and to reduce ambiguity when extending the benchmark with additional models or datasets.
+
+The algorithm table links each model family to the optimization or geometry mechanism that scaling influences most. This helps explain why the same scaler can improve one model while barely affecting another.
+
+A practical reading strategy is to combine this section with the visual section below. Use the formulas to interpret transformation intent, then verify behavior using the PNG artifacts and CV summaries.
+
+| <sub>#</sub> | <sub>Method</sub> | <sub>Formula</sub> | <sub>Key Effect</sub> | <sub>Primary Limitation</sub> |
+| --- | --- | --- | --- | --- |
+| <sub>1</sub> | <sub>Z-Score</sub> | <sub>z=(x-mu)/sigma</sub> | <sub>Centers and variance-normalizes feature columns</sub> | <sub>Moment estimates sensitive to outliers</sub> |
+| <sub>2</sub> | <sub>Min-Max</sub> | <sub>x'=(x-min)/(max-min)</sub> | <sub>Bounds each feature into fixed numeric range</sub> | <sub>Extrema can compress inlier spread</sub> |
+| <sub>3</sub> | <sub>Robust</sub> | <sub>x'=(x-median)/IQR</sub> | <sub>Reduces outlier leverage using robust statistics</sub> | <sub>Less direct variance interpretation</sub> |
+| <sub>4</sub> | <sub>L2 Normalizer</sub> | <sub>x'=x/norm2(x)</sub> | <sub>Normalizes row length for directional comparison</sub> | <sub>Can hurt feature-wise tabular tasks</sub> |
+| <sub>5</sub> | <sub>PCA Projection</sub> | <sub>Z=XW</sub> | <sub>Projects to principal variance directions</sub> | <sub>Information loss in low-dimensional view</sub> |
+
+> [!NOTE]
+> This formula table maps transformation math to practical effect and failure risk.
+
+| <sub>#</sub> | <sub>Algorithm</sub> | <sub>Core Objective</sub> | <sub>Scaling Interaction</sub> | <sub>Expected Behavior</sub> |
+| --- | --- | --- | --- | --- |
+| <sub>1</sub> | <sub>Logistic Regression</sub> | <sub>Minimize regularized log loss</sub> | <sub>Gradient and penalty terms are scale-sensitive</sub> | <sub>Strong gains from z-score or robust scaling</sub> |
+| <sub>2</sub> | <sub>KNN</sub> | <sub>Distance-based voting</sub> | <sub>Nearest-neighbor geometry depends on scale</sub> | <sub>Very high sensitivity to preprocessing</sub> |
+| <sub>3</sub> | <sub>SVM RBF</sub> | <sub>Margin with kernel distance</sub> | <sub>Kernel radius meaning shifts with scale</sub> | <sub>High sensitivity to preprocessing</sub> |
+| <sub>4</sub> | <sub>MLP</sub> | <sub>Optimize non-convex loss by gradient descent</sub> | <sub>Input scale affects conditioning and convergence</sub> | <sub>Performance and stability shifts likely</sub> |
+| <sub>5</sub> | <sub>Random Forest</sub> | <sub>Ensemble impurity reduction</sub> | <sub>Split thresholds mostly unit-invariant</sub> | <sub>Usually lower sensitivity than distance models</sub> |
+
+> [!NOTE]
+> This algorithm table explains model-specific responses to identical preprocessing choices.
+
+## Visual Explanations with PNG Artifacts
+
+The visual outputs below are generated directly by the benchmark pipeline and stored in the results folder. They are embedded here so readers can connect formulas and tables to concrete model behavior.
+
+Each visualization includes a summary with multiple paragraphs so interpretation is explicit rather than implied. The goal is not only to display figures, but also to explain what each figure means for model selection and preprocessing strategy.
+
+### Visualization 1 - Model Accuracy by Scaling Strategy
+
+![Model Accuracy by Scaling Strategy](results/model_scores.png)
+
+The grouped bar chart provides a fast comparative view across all scaler-model pairs in the holdout run. You can quickly see that the relative ranking pattern differs by model family, which is exactly what scaling theory predicts.
+
+Distance-sensitive and gradient-sensitive learners respond more strongly to preprocessing variation than tree ensembles. This supports the engineering rule that preprocessing should be selected jointly with algorithm class rather than as a global default.
+
+The chart is most useful as a first-pass triage view. It tells you where to focus deeper analysis, then confusion matrices and CV intervals explain whether gains are stable and where error tradeoffs moved.
+
+> [!NOTE]
+> This figure summarizes holdout ranking structure and helps prioritize deeper diagnostics.
+
+### Visualization 2 - PCA Projection by Scaler
+
+![PCA Projection by Scaler](results/pca_projections.png)
+
+The PCA figure shows how each scaler changes two-dimensional variance structure after transformation. Even when final accuracy values are close, class cloud geometry can shift enough to affect boundary shape and confidence distribution.
+
+This plot is diagnostic rather than decisive. A cleaner class separation in two components does not guarantee a better classifier, but it often signals whether preprocessing is improving representation geometry for downstream learners.
+
+A useful practice is to compare PCA patterns with CV confidence intervals. If geometry looks cleaner and intervals remain consistently higher across folds, the preprocessing choice is more likely to generalize.
+
+> [!NOTE]
+> This figure visualizes feature-space geometry after scaling and supports interpretation of downstream metric changes.
+
+### Visualization 3 - Confusion Matrices for Z-Score
+
+![Confusion Matrices for Z-Score](results/confusion_matrices_zscore.png)
+
+This confusion matrix panel shows error decomposition for each model when z-score is used. The key value is not only total accuracy, but where false positives and false negatives concentrate.
+
+Model-level error asymmetry is important in applied settings. Two models can have similar accuracy while exhibiting very different false-negative profiles, which can matter significantly in risk-sensitive domains.
+
+Use this panel together with per-model CV statistics to avoid overinterpreting a single split. If confusion structure and repeated-CV mean move in the same direction, selection confidence increases.
+
+> [!NOTE]
+> This figure decomposes z-score performance into class-specific error patterns.
+
+### Visualization 4 - Confusion Matrices for Min-Max
+
+![Confusion Matrices for Min-Max](results/confusion_matrices_minmax.png)
+
+The min-max panel highlights how bounded scaling can alter class boundary behavior relative to z-score. In some models this can improve margin behavior, while in others it may compress informative spread.
+
+This panel is especially informative when comparing MLP and KNN behavior. Both can benefit from controlled numeric ranges, but the exact gain depends on feature distribution shape and outlier placement.
+
+Interpret this panel alongside the formula table. Min-max relies on extrema, so unstable min or max values can explain shifts in confusion structure even when central tendency appears similar.
+
+> [!NOTE]
+> This figure helps evaluate whether bounded scaling improves or distorts class discrimination for each model.
+
+### Visualization 5 - Confusion Matrices for Robust Scaling
+
+![Confusion Matrices for Robust Scaling](results/confusion_matrices_robust.png)
+
+Robust scaling uses median and IQR, so this panel is useful when outliers are plausible contributors to metric instability. In this benchmark it often remains highly competitive across model families.
+
+The most important interpretation is error distribution stability. If robust scaling reduces volatility in confusion structure across models, it can be a safer default in noisy feature regimes.
+
+This panel should not be treated as proof that robust scaling is always best. It is evidence that robust moments can improve resilience under certain feature distributions and should be benchmarked, not assumed.
+
+> [!NOTE]
+> This figure evaluates outlier-robust preprocessing effects on class-level errors.
+
+### Visualization 6 - Confusion Matrices for L2 Normalization
+
+![Confusion Matrices for L2 Normalization](results/confusion_matrices_l2_norm.png)
+
+The L2 panel shows the behavior of row-wise normalization in a feature-oriented tabular setting. This transformation is often strong for directional similarity tasks, but it can be misaligned with tabular feature semantics.
+
+In this benchmark, L2 normalization is generally weaker on mean accuracy and often shows less favorable confusion structures for several models. That outcome is consistent with the objective mismatch between row normalization and feature-scale balancing.
+
+This visualization is still valuable because it prevents overgeneralization. A method performing worse here is not universally poor, it is simply less aligned with this dataset type and objective structure.
+
+> [!NOTE]
+> This figure illustrates why directional normalization may underperform in many raw tabular classification tasks.
 
 ## Results Snapshot
 

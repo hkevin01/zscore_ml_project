@@ -166,33 +166,91 @@ A second practical benefit is comparability during model inspection. When featur
 
 ## Transformers and Attention Context
 
-For many transformer systems, internal normalization layers (for example LayerNorm or RMSNorm) are part of model architecture, so external z-score is not automatically mandatory in the same way as classical tabular LR/KNN pipelines. For tabular transformer setups with heterogeneous numeric feature units, external feature scaling can still improve input stability.
+Transformers and z-score normalization operate at completely different layers of a pipeline, and understanding that distinction is critical for avoiding both over-engineering and under-engineering your preprocessing stack. In classical ML, z-score lives at the input data layer, before any model receives features. In transformers, normalization lives inside the model architecture itself, after token embeddings are projected into hidden representations.
 
-Attention mechanisms operate on projected representations, and these projections are followed by normalization blocks that stabilize hidden-state statistics. Because of this internal architecture, external feature z-scoring is often less central in tokenized NLP pipelines than in classical tabular ML. The preprocessing burden shifts toward tokenization, masking, and representation alignment.
+The transformer architecture introduced in "Attention Is All You Need" by Vaswani et al. (2017) uses multi-head self-attention to learn relationships between tokens. Each attention head projects input embeddings into query, key, and value subspaces, computes scaled dot-product attention weights, and combines values according to those weights. The scaling factor applied in attention is $1/\sqrt{d_k}$, where $d_k$ is the key dimension. This is a fixed structural stabilizer, not a learned data-driven normalization in the z-score sense.
 
-However, when transformers are used for mixed numeric tabular data, input scale heterogeneity can still propagate into early projection layers. In that setting, benchmarking with and without external scaling remains a strong engineering practice. The correct choice is empirical and task-specific, not ideological.
+LayerNorm is applied after attention and feed-forward blocks in most transformer variants. It normalizes each sample across the hidden-state dimension, not across the dataset. This is fundamentally different from z-score, which normalizes each feature column across the training sample population. LayerNorm operates at the representation level per token per layer. Z-score operates at the raw input level per feature column across all training samples.
 
-| <sub>#</sub> | <sub>Context</sub> | <sub>External Z-Score Need</sub> | <sub>Primary Normalization Location</sub> | <sub>Guideline</sub> |
-| --- | --- | --- | --- | --- |
-| <sub>1</sub> | <sub>Classical tabular LR/KNN/SVM</sub> | <sub>Usually strong need</sub> | <sub>Input pipeline</sub> | <sub>Scale by default then validate</sub> |
-| <sub>2</sub> | <sub>NLP transformer embeddings</sub> | <sub>Often low need</sub> | <sub>Inside model blocks</sub> | <sub>Follow model-native normalization path</sub> |
-| <sub>3</sub> | <sub>Tabular transformer numeric inputs</sub> | <sub>Case-dependent</sub> | <sub>Both input and model layers</sub> | <sub>Benchmark with and without scaling</sub> |
-| <sub>4</sub> | <sub>Production drift scenario</sub> | <sub>Needs governance</sub> | <sub>Pipeline versioning</sub> | <sub>Revalidate normalization assumptions</sub> |
+### When Z-Score is Used in Transformer Contexts
+
+Z-score becomes relevant in transformer pipelines when raw numeric tabular features are used as input before the first embedding or projection layer. If your transformer model ingests 30 numeric tabular columns representing clinical measurements, financial indicators, or sensor readings, those columns still have heterogeneous units and ranges. The model's first linear projection layers do not inherently cancel that scale difference. In that setting, external z-score preprocessing can stabilize early-layer optimization and reduce dependence on learning-rate scheduling to compensate for input scale variation.
+
+Another scenario where z-score matters is preprocessing for hybrid architectures that mix text tokens with structured numeric features. If numeric features are concatenated or added to token embeddings before attention, scale misalignment between the two modalities can distort early attention distributions. Z-scoring the numeric inputs before fusion is a common engineering practice in such architectures.
 
 > [!NOTE]
-> This table clarifies how transformer-era methods change normalization defaults without removing the need for tabular preprocessing discipline.
+> Z-score is most relevant in transformers when raw numeric features enter the model without a learned embedding bottleneck that would absorb scale differences.
+
+### When Z-Score is Not the Right Tool in Transformer Contexts
+
+Z-score is generally not the appropriate tool for text token embeddings. Word embeddings from pretrained models like BERT or GPT are already organized in a learned semantic space. Applying z-score standardization across token embedding dimensions would destroy the geometric structure that makes similarity and attention meaningful. The representations would lose their direction-based semantics because z-score imposes a global column-wise normalization that is blind to semantic neighborhood structure.
+
+Z-score is also not needed when your transformer architecture already includes BatchNorm or LayerNorm at every residual block. Those internal layers handle representational normalization as part of the forward pass. Adding redundant external z-scoring on top of a well-architected transformer often adds noise rather than benefit.
+
+Finally, z-score is ineffective for sparse or categorical inputs that are one-hot encoded or positionally embedded before entry into the model. The statistical properties that z-score depends on, finite mean and variance over a continuous distribution, do not apply in the same way to discrete indicator vectors.
+
+| <sub>#</sub> | <sub>Context</sub> | <sub>Z-Score Used?</sub> | <sub>Reason</sub> |
+| --- | --- | --- | --- |
+| <sub>1</sub> | <sub>NLP text tokens</sub> | <sub>No</sub> | <sub>Embeddings already in learned semantic space</sub> |
+| <sub>2</sub> | <sub>Tabular numeric inputs to transformer</sub> | <sub>Usually yes</sub> | <sub>Input scale varies before projection layer</sub> |
+| <sub>3</sub> | <sub>Hybrid text plus numeric inputs</sub> | <sub>Yes for numeric part</sub> | <sub>Prevents scale skew in multi-modal fusion</sub> |
+| <sub>4</sub> | <sub>Internal hidden states</sub> | <sub>No</sub> | <sub>LayerNorm handles this internally</sub> |
+| <sub>5</sub> | <sub>One-hot or sparse inputs</sub> | <sub>No</sub> | <sub>Discrete vectors lack continuous distribution</sub> |
+
+> [!NOTE]
+> This table separates transformer contexts where external z-score applies from those where it would be counterproductive.
+
+| <sub>#</sub> | <sub>Normalization Type</sub> | <sub>Where Applied</sub> | <sub>What It Normalizes</sub> |
+| --- | --- | --- | --- |
+| <sub>1</sub> | <sub>Z-Score (StandardScaler)</sub> | <sub>Input pipeline, before model</sub> | <sub>Feature columns across training samples</sub> |
+| <sub>2</sub> | <sub>LayerNorm</sub> | <sub>Inside transformer blocks</sub> | <sub>Hidden states per token per layer</sub> |
+| <sub>3</sub> | <sub>BatchNorm</sub> | <sub>Inside deep learning layers</sub> | <sub>Activations per channel across batch</sub> |
+| <sub>4</sub> | <sub>Attention scaling (1/sqrt dk)</sub> | <sub>Inside attention head</sub> | <sub>Dot-product scores before softmax</sub> |
+| <sub>5</sub> | <sub>RMSNorm</sub> | <sub>Inside transformer blocks</sub> | <sub>Root-mean-square of hidden states per token</sub> |
+
+> [!NOTE]
+> This table shows how different normalization mechanisms operate at different pipeline positions.
 
 ## Drift and Update Policy
 
-| <sub>#</sub> | <sub>Observed Signal</sub> | <sub>Likely Cause</sub> | <sub>Action</sub> | <sub>Verification</sub> |
-| --- | --- | --- | --- | --- |
-| <sub>1</sub> | <sub>Feature mean shift</sub> | <sub>Covariate drift</sub> | <sub>Retrain and refit scaler</sub> | <sub>Compare holdout and CV deltas</sub> |
-| <sub>2</sub> | <sub>Variance regime change</sub> | <sub>Sensor or source change</sub> | <sub>Refit scaler and rerun CI benchmark</sub> | <sub>Check CI overlap and confusion matrices</sub> |
-| <sub>3</sub> | <sub>Sudden serving metric drop</sub> | <sub>Train-serving preprocessing mismatch</sub> | <sub>Audit scaler artifact parity</sub> | <sub>Reproduce with frozen artifacts</sub> |
-| <sub>4</sub> | <sub>Class balance shift</sub> | <sub>Population change</sub> | <sub>Re-split stratified sets and retrain</sub> | <sub>Monitor per-class confusion changes</sub> |
+Z-score normalization is grounded in a fundamental assumption: the mean and standard deviation estimated from training data remain good approximations of the true distribution at serving time. When that assumption breaks down because of distribution shift, the scaler becomes a silent source of error. The model continues to receive transformed inputs, but those inputs are now centered and scaled around statistics that no longer match the current data distribution.
+
+Drift is not always obvious in production metrics. If the feature distribution shifts gradually, the model's prediction quality may degrade slowly rather than suddenly. A scaler fitted months ago on one population may still produce numerically reasonable outputs, but the standardized values may no longer carry the same geometric meaning they had during training. This type of silent drift is one of the hardest problems in applied ML operations.
+
+The z-score scaler is particularly exposed to mean drift and variance drift. Mean shift in a feature moves the center of the transformed distribution away from zero, which is where the model learned to operate. Variance change compresses or expands the effective input range, altering the scale of optimizer gradients if the model is later fine-tuned, and distorting distance and boundary calculations for deployed models.
+
+> [!IMPORTANT]
+> Drift does not always trigger model errors immediately. Silent preprocessing drift is common in deployed systems and is easily missed without explicit artifact monitoring.
+
+### How Drift Connects to Transformers and Attention
+
+In transformer-based systems, drift affects both external preprocessing and internal normalization layers differently. External z-score drift affects the raw input distribution before any learned projection. Internal LayerNorm is more adaptive because it normalizes per-sample per-layer dynamically during the forward pass, so it partially compensates for input-level distributional changes without any explicit retraining.
+
+This architectural difference means that transformer models can sometimes tolerate moderate input drift better than classical models like logistic regression or KNN, where the scaler's statistics are the only normalization mechanism. However, this tolerance is not unlimited. Severe drift still degrades transformer attention quality because the initial projection layers feed corrupted statistics into the attention mechanism.
+
+For models that mix classical preprocessing with transformer components, the weakest link is usually the external scaler. An internal LayerNorm cannot correct for input features that arrive already distorted by an outdated z-score transform. This is why versioning the scaler artifact together with the model weights is a critical practice in any mixed-pipeline deployment.
+
+| <sub>#</sub> | <sub>Drift Signal</sub> | <sub>Likely Cause</sub> | <sub>Action</sub> |
+| --- | --- | --- | --- |
+| <sub>1</sub> | <sub>Feature mean shift</sub> | <sub>Covariate drift</sub> | <sub>Retrain and refit scaler</sub> |
+| <sub>2</sub> | <sub>Variance regime change</sub> | <sub>Source or sensor change</sub> | <sub>Refit scaler and rerun CI benchmark</sub> |
+| <sub>3</sub> | <sub>Serving metric drop</sub> | <sub>Preprocessing mismatch</sub> | <sub>Audit scaler artifact parity</sub> |
+| <sub>4</sub> | <sub>Class balance shift</sub> | <sub>Population change</sub> | <sub>Re-split stratified sets and retrain</sub> |
 
 > [!NOTE]
-> This table converts drift theory into operational actions and checks.
+> This table maps observable drift signals to probable causes and corrective actions.
+
+The table below compares how the same drift event affects z-score preprocessing and transformer-internal LayerNorm differently.
+
+| <sub>#</sub> | <sub>Drift Type</sub> | <sub>Z-Score Impact</sub> | <sub>Transformer LayerNorm Response</sub> |
+| --- | --- | --- | --- |
+| <sub>1</sub> | <sub>Mean shift</sub> | <sub>Center moves away from zero</sub> | <sub>Partial compensation at hidden layer</sub> |
+| <sub>2</sub> | <sub>Variance change</sub> | <sub>Input range expands or compresses</sub> | <sub>Some compensation but corrupted input persists</sub> |
+| <sub>3</sub> | <sub>Tail extension</sub> | <sub>New extrema fall past scaler training range</sub> | <sub>Attention scores may shift, model still runs</sub> |
+| <sub>4</sub> | <sub>New feature categories</sub> | <sub>No learned statistics for new values</sub> | <sub>No internal correction possible</sub> |
+
+> [!NOTE]
+> This table shows why z-score drift and LayerNorm behavior diverge under the same distribution shift event.
 
 ## Experimental Protocol
 

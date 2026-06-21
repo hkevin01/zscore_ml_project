@@ -17,6 +17,58 @@ The code now supports both a holdout benchmark and a repeated stratified cross-v
 > [!IMPORTANT]
 > Scaling is fit on training data only. Validation, test, and inference data are transformed using the already-fitted scaler.
 
+---
+
+## What Is a Z-Score and How Does It Work
+
+A z-score, also called a standard score, is a way of expressing how far a single data point sits from the mean of its feature, measured in units of standard deviation. If a feature has values spread widely across different numeric ranges, z-scoring brings every feature onto a common scale centered at zero with unit variance. This does not change the shape of the distribution or remove outliers. It changes the reference frame so that values across different features can be compared and processed as if they were operating at a common magnitude.
+
+The formula is straightforward. For each observed value $x$ in a feature column, subtract the column mean $\mu$ and divide by the column standard deviation $\sigma$. The result $z$ tells you how many standard deviations above or below the mean that value falls.
+
+$$z = \frac{x - \mu}{\sigma}$$
+
+A z-score of 0 means the value is exactly at the mean. A z-score of 1.0 means one standard deviation above the mean. A z-score of -2.0 means two standard deviations below. These values are unitless and dimensionally consistent across all features, which is exactly what distance-based and gradient-based models need to function correctly.
+
+In machine learning, the mean and standard deviation are always estimated from the training data only. They are then frozen and reused to transform validation, test, and production data. This prevents the scaler from seeing future data, which would introduce leakage and inflate evaluation metrics.
+
+> [!NOTE]
+> Z-score does not make your data Gaussian. It shifts the center and scales the spread. Skewness, heavy tails, and outliers remain unless you apply additional transforms.
+
+### ML Training Pipeline - Where Z-Score Is Applied Step by Step
+
+The table below shows each step in a standard supervised ML workflow and what z-score is doing or not doing at each stage.
+
+| <sub>#</sub> | <sub>Pipeline Step</sub> | <sub>Z-Score Action</sub> | <sub>How It Works</sub> | <sub>What Happens If Skipped or Wrong</sub> |
+| --- | --- | --- | --- | --- |
+| <sub>1</sub> | <sub>Collect raw data</sub> | <sub>None yet</sub> | <sub>Inspect units and ranges</sub> | <sub>No impact yet</sub> |
+| <sub>2</sub> | <sub>Exploratory analysis</sub> | <sub>None yet</sub> | <sub>Check mean, variance, outliers</sub> | <sub>Missed signals about scaling need</sub> |
+| <sub>3</sub> | <sub>Train/test split</sub> | <sub>Split boundary created first</sub> | <sub>Decide split before any fitting</sub> | <sub>If scaler fit before split, leakage occurs</sub> |
+| <sub>4</sub> | <sub>Fit scaler on train set</sub> | <sub>Compute mu and sigma per feature</sub> | <sub>StandardScaler.fit(X_train)</sub> | <sub>If fit on all data, test stats leak into train</sub> |
+| <sub>5</sub> | <sub>Transform train features</sub> | <sub>Apply z=(x-mu)/sigma to train</sub> | <sub>StandardScaler.transform(X_train)</sub> | <sub>Model trains on raw unscaled features</sub> |
+| <sub>6</sub> | <sub>Train model</sub> | <sub>Model receives scaled inputs</sub> | <sub>Optimizer and regularization use scaled space</sub> | <sub>Scale-sensitive models converge poorly</sub> |
+| <sub>7</sub> | <sub>Transform val/test features</sub> | <sub>Reuse same mu and sigma from step 4</sub> | <sub>StandardScaler.transform(X_test)</sub> | <sub>If refit on test, evaluation is invalid</sub> |
+| <sub>8</sub> | <sub>Evaluate model</sub> | <sub>No new scaler action</sub> | <sub>Metrics computed on scaled test predictions</sub> | <sub>Reported metrics do not reflect real performance</sub> |
+| <sub>9</sub> | <sub>Deploy to production</sub> | <sub>Save and reload fitted scaler artifact</sub> | <sub>Apply same transform to live inputs</sub> | <sub>Train-serving skew if scaler not versioned</sub> |
+| <sub>10</sub> | <sub>Monitor and retrain</sub> | <sub>Refit scaler on new training window</sub> | <sub>New mu and sigma from updated data</sub> | <sub>Stale scaler causes silent quality decay</sub> |
+
+> [!NOTE]
+> This table is the core workflow reference. Steps 3 and 4 are the most commonly mishandled. Split first, fit scaler second, transform third. Never reverse that order.
+
+The table below shows what z-score does to a concrete example set of values so the math is tangible.
+
+| <sub>#</sub> | <sub>Raw Value</sub> | <sub>Feature Mean (mu)</sub> | <sub>Feature Std (sigma)</sub> | <sub>Z-Score Result</sub> | <sub>Interpretation</sub> |
+| --- | --- | --- | --- | --- | --- |
+| <sub>1</sub> | <sub>170 cm height</sub> | <sub>170</sub> | <sub>10</sub> | <sub>0.0</sub> | <sub>Exactly at mean</sub> |
+| <sub>2</sub> | <sub>180 cm height</sub> | <sub>170</sub> | <sub>10</sub> | <sub>1.0</sub> | <sub>One std above mean</sub> |
+| <sub>3</sub> | <sub>150 cm height</sub> | <sub>170</sub> | <sub>10</sub> | <sub>-2.0</sub> | <sub>Two std below mean</sub> |
+| <sub>4</sub> | <sub>65000 income</sub> | <sub>65000</sub> | <sub>18000</sub> | <sub>0.0</sub> | <sub>Exactly at mean</sub> |
+| <sub>5</sub> | <sub>101000 income</sub> | <sub>65000</sub> | <sub>18000</sub> | <sub>2.0</sub> | <sub>Two std above mean</sub> |
+
+> [!NOTE]
+> After z-scoring, height and income both live on the same numeric scale. A KNN model asking "which sample is nearest?" now treats both features fairly instead of letting income dominate by magnitude.
+
+---
+
 ## Table of Contents
 
 - Project Scope

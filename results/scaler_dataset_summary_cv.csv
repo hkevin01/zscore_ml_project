@@ -1,0 +1,9 @@
+dataset,scaler,mean_accuracy_across_models
+breast_cancer,zscore,0.9705461884800497
+breast_cancer,robust,0.9695637323396988
+breast_cancer,minmax,0.9678844899860269
+breast_cancer,l2_norm,0.8943586399627387
+wine,zscore,0.9803873015873016
+wine,minmax,0.9799238095238095
+wine,robust,0.9783682539682539
+wine,l2_norm,0.7825650793650794

@@ -15,12 +15,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
-from sklearn.datasets import load_breast_cancer
+from sklearn.datasets import load_breast_cancer, load_wine
 from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import ConfusionMatrixDisplay, accuracy_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import RepeatedStratifiedKFold, cross_val_score, train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
@@ -145,6 +145,17 @@ def _classification_dataset() -> tuple[pd.DataFrame, pd.Series]:
     return features, target
 
 
+def _classification_datasets() -> dict[str, tuple[pd.DataFrame, pd.Series]]:
+    """Return named datasets used for the research-strength comparison."""
+
+    breast = load_breast_cancer(as_frame=True)
+    wine = load_wine(as_frame=True)
+    return {
+        "breast_cancer": (breast.data, breast.target),
+        "wine": (wine.data, wine.target),
+    }
+
+
 def evaluate_scalers() -> BenchmarkArtifacts:
     """Benchmark each scaler across multiple models with train-only fitting."""
 
@@ -210,6 +221,81 @@ def save_benchmark_tables(artifacts: BenchmarkArtifacts) -> tuple[Path, Path]:
     summary_path = results_dir / "scaler_comparison_table.csv"
     artifacts.results_table.to_csv(detailed_path, index=False)
     artifacts.summary_table.to_csv(summary_path, index=False)
+    return detailed_path, summary_path
+
+
+def evaluate_scalers_with_cv(
+    folds: int = 5,
+    repeats: int = 5,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Evaluate scalers with repeated stratified CV across two datasets.
+
+    Returns a detailed table with mean/std/CI and a dataset-level summary.
+    """
+
+    rows: list[dict[str, float | str]] = []
+    splitter = RepeatedStratifiedKFold(n_splits=folds, n_repeats=repeats, random_state=SEED)
+    n_splits_total = folds * repeats
+
+    for dataset_name, (features, target) in _classification_datasets().items():
+        for scaler_name, scaler in build_scalers().items():
+            for model_name, model in build_models().items():
+                pipeline = Pipeline(
+                    steps=[
+                        ("scaler", clone(scaler)),
+                        ("model", clone(model)),
+                    ]
+                )
+                scores = cross_val_score(
+                    pipeline,
+                    features,
+                    target,
+                    cv=splitter,
+                    scoring="accuracy",
+                    n_jobs=-1,
+                )
+                mean_score = float(np.mean(scores))
+                std_score = float(np.std(scores, ddof=1))
+                ci_half = 1.96 * std_score / np.sqrt(n_splits_total)
+                rows.append(
+                    {
+                        "dataset": dataset_name,
+                        "scaler": scaler_name,
+                        "model": model_name,
+                        "cv_folds": folds,
+                        "cv_repeats": repeats,
+                        "n_splits": n_splits_total,
+                        "mean_accuracy": mean_score,
+                        "std_accuracy": std_score,
+                        "ci95_low": mean_score - ci_half,
+                        "ci95_high": mean_score + ci_half,
+                    }
+                )
+
+    detailed = pd.DataFrame(rows).sort_values(["dataset", "model", "mean_accuracy"], ascending=[True, True, False])
+
+    summary = (
+        detailed.groupby(["dataset", "scaler"], as_index=False)["mean_accuracy"]
+        .mean()
+        .rename(columns={"mean_accuracy": "mean_accuracy_across_models"})
+        .sort_values(["dataset", "mean_accuracy_across_models"], ascending=[True, False])
+    )
+
+    return detailed, summary
+
+
+def save_cv_tables(
+    detailed: pd.DataFrame,
+    summary: pd.DataFrame,
+) -> tuple[Path, Path]:
+    """Persist repeated-CV benchmark tables to CSV files."""
+
+    ensure_directories()
+    results_dir = project_root() / "results"
+    detailed_path = results_dir / "scaler_model_scores_cv.csv"
+    summary_path = results_dir / "scaler_dataset_summary_cv.csv"
+    detailed.to_csv(detailed_path, index=False)
+    summary.to_csv(summary_path, index=False)
     return detailed_path, summary_path
 
 

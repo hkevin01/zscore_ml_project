@@ -1,230 +1,383 @@
-# Z-Score Normalization in Machine Learning: A Comparative Analysis
+# Z-Score Normalization in Machine Learning: End-to-End Comparative Study
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
-![scikit-learn](https://img.shields.io/badge/scikit--learn-Feature%20Scaling-F7931E?logo=scikitlearn&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Reproducible%20Demo-2ea44f)
-![License](https://img.shields.io/badge/License-MIT-blue)
-![Focus](https://img.shields.io/badge/Focus-Preprocessing%20for%20ML-6f42c1)
+![NumPy](https://img.shields.io/badge/NumPy-1.26%2B-013243?logo=numpy&logoColor=white)
+![pandas](https://img.shields.io/badge/pandas-2.2%2B-150458?logo=pandas&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-1.5%2B-F7931E?logo=scikitlearn&logoColor=white)
+![matplotlib](https://img.shields.io/badge/matplotlib-3.8%2B-11557C)
+![Status](https://img.shields.io/badge/status-reproducible-green)
+![Focus](https://img.shields.io/badge/focus-feature%20scaling-blue)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-This project demonstrates how z-score normalization works, why it matters in modern machine learning workflows, and how it compares with other common scaling strategies in practice. The repository is intentionally small enough to study in one sitting, but it is also opinionated enough to illustrate the engineering decisions that matter in real ML pipelines: fitting scalers on training data only, using consistent random seeds, comparing multiple model families, and documenting when a preprocessing step helps, hurts, or does not matter.
+This repository is a practical, reproducible study of feature scaling for tabular machine learning. It does not treat normalization as a checkbox. Instead, it shows how scaling changes feature geometry, how that geometry affects different algorithm families, and how to evaluate those effects with leakage-safe pipelines.
 
-Instead of treating scaling as a checkbox, the project shows that preprocessing changes the geometry of the feature space. For distance-based models, that geometry strongly affects neighborhood structure. For margin-based or gradient-based models, it changes the optimization landscape and the meaning of regularization. For tree-based models, it often has little effect, which is equally important to understand because it tells you when extra preprocessing effort is unnecessary.
+The project now includes an expanded benchmark with five classifiers, four scalers, PCA visual diagnostics, and confusion matrix outputs. You can run the entire experiment from a clean Python environment and regenerate every artifact in the results folder.
 
 > [!IMPORTANT]
-> Feature scaling is fitted on the training split only and then applied to the test split. This avoids data leakage and keeps the benchmark aligned with recommended scikit-learn pipeline practice.
+> All preprocessing is fitted on training data only, then applied to held-out test data. This is critical for leakage-safe evaluation and realistic performance estimates.
+
+> [!NOTE]
+> This is a focused study of preprocessing behavior. It is intentionally not a large MLOps framework, not a hyperparameter sweep platform, and not a model serving template.
 
 > [!TIP]
-> If you are deciding between standardization and normalization, remember that they solve different problems. Z-score scaling standardizes each feature column, while L2 normalization rescales each sample row to unit length.
+> If you are deciding between z-score and L2 normalization, remember that they solve different problems: z-score standardizes columns, while L2 normalization rescales each row vector to unit length.
 
 ## Table of Contents
 
-- [Why This Project Exists](#why-this-project-exists)
-- [Project Snapshot](#project-snapshot)
-- [Top-Level Comparison](#top-level-comparison)
-- [What a Z-Score Means](#what-a-z-score-means)
-- [Architecture](#architecture)
-- [How the Experiment Works](#how-the-experiment-works)
+- [What This Project Is and Why It Matters](#what-this-project-is-and-why-it-matters)
+- [Fast Comparison Near the Top](#fast-comparison-near-the-top)
+- [Architecture and Data Flow](#architecture-and-data-flow)
+- [Algorithms, Formulas, and Why They Were Chosen](#algorithms-formulas-and-why-they-were-chosen)
+- [Where Z-Score Fits in Modern ML and AI Pipelines](#where-z-score-fits-in-modern-ml-and-ai-pipelines)
+- [Experimental Design](#experimental-design)
 - [Results and Interpretation](#results-and-interpretation)
-- [Tech Stack](#tech-stack)
-- [Run the Project](#run-the-project)
-- [Detailed Guidance](#detailed-guidance)
-- [References](#references)
-- [API Reference](#api-reference)
+- [How to Run](#how-to-run)
+- [GitHub Publishing and Community Health](#github-publishing-and-community-health)
+- [Practical Tips, Notes, and Gotchas](#practical-tips-notes-and-gotchas)
+- [Collapsible API Reference](#collapsible-api-reference)
+- [References: Articles and arXiv](#references-articles-and-arxiv)
 
-## Why This Project Exists
+---
 
-Feature scaling is one of the first preprocessing steps many practitioners learn, but it is also one of the easiest to apply mechanically without understanding. That gap matters because different algorithms respond to scale for different mathematical reasons. Logistic regression and linear SVMs care about balanced feature magnitudes because regularization terms penalize coefficients in a scale-sensitive way. K-nearest neighbors depends directly on geometric distance, so one high-variance feature can dominate every neighborhood query. Random forests, by contrast, split on thresholds and are largely insensitive to whether a feature is measured in dollars, centimeters, or normalized units.
+## What This Project Is and Why It Matters
 
-This repository therefore does three things at once. It explains the underlying formula. It implements a compact Python benchmark with scikit-learn. It documents the surrounding reasoning in a GitHub-first format with diagrams, tables, notes, and references so the repository can function as both a learning artifact and a reusable project template.
+Feature scaling is one of the most common preprocessing steps in machine learning, but it is often applied without understanding why it helps and when it can hurt. Different algorithms react to scale for different mathematical reasons. Distance-based methods care because distances define the model. Gradient-based methods care because objective conditioning and regularization strength depend on feature magnitudes. Tree-based models care much less because split ordering usually dominates unit size.
 
-## Project Snapshot
+This repository demonstrates those differences with concrete code and reproducible outputs. It uses scikit-learn pipelines so scaling and model fitting are always connected and leakage-safe. It also includes visual diagnostics that make the behavior easier to inspect: a grouped model score chart, PCA projections by scaler, and confusion matrix grids.
+
+### Repository Snapshot
 
 ```text
 zscore_ml_project/
+├── README.md
+├── requirements.txt
 ├── data/
 │   └── synthetic_data.csv
 ├── docs/
 ├── results/
-│   ├── model_scores.png
 │   ├── scaler_comparison_table.csv
-│   └── scaler_model_scores.csv
-├── src/
-│   ├── compare_scalers.py
-│   ├── utils.py
-│   └── zscore_demo.py
-├── .gitignore
-├── README.md
-└── requirements.txt
+│   ├── scaler_model_scores.csv
+│   ├── scaler_model_scores_cv.csv
+│   ├── scaler_dataset_summary_cv.csv
+│   ├── model_scores.png
+│   ├── pca_projections.png
+│   ├── confusion_matrices_zscore.png
+│   ├── confusion_matrices_minmax.png
+│   ├── confusion_matrices_robust.png
+│   └── confusion_matrices_l2_norm.png
+└── src/
+    ├── zscore_demo.py
+    ├── compare_scalers.py
+    └── utils.py
 ```
 
-The synthetic dataset supports the mathematical demonstration by showing how raw features with very different scales are transformed to a standardized space. The benchmarking script uses the breast cancer classification dataset from scikit-learn because it is numeric, tabular, common in tutorials, and rich enough to show meaningful differences between scalers without adding unnecessary data-wrangling complexity.
+---
 
-## Top-Level Comparison
+## Fast Comparison Near the Top
 
-| # | <sub>Scaler</sub> | <sub>What It Does</sub> | <sub>Primary Formula or Rule</sub> | <sub>When It Usually Helps</sub> | <sub>When It Is a Weak Fit</sub> |
+### Table 1 - Scaler Comparison at a Glance
+
+| Scaler | Core Transformation | What It Standardizes | Best Use Case | Weak Use Case | Sensitivity to Outliers |
 | --- | --- | --- | --- | --- | --- |
-| 1 | <sub>Z-Score / StandardScaler</sub> | <sub>Centers each feature at zero and scales variance to one</sub> | <sub>$(x - \mu) / \sigma$</sub> | <sub>Linear models, SVMs, KNN, PCA, neural nets</sub> | <sub>Heavy outlier settings where mean and variance are unstable</sub> |
-| 2 | <sub>Min-Max Scaling</sub> | <sub>Maps each feature to a fixed interval, usually $[0,1]$</sub> | <sub>$(x - x_{min}) / (x_{max} - x_{min})$</sub> | <sub>Bounded inputs, image-like ranges, some neural nets</sub> | <sub>Outliers distort the full range</sub> |
-| 3 | <sub>Robust Scaling</sub> | <sub>Centers by median and scales by IQR</sub> | <sub>$(x - \text{median}) / \text{IQR}$</sub> | <sub>Outlier-heavy numeric data</sub> | <sub>Less intuitive when variance-based interpretation matters</sub> |
-| 4 | <sub>L2 Normalization</sub> | <sub>Scales each sample row to unit Euclidean norm</sub> | <sub>$x / ||x||_2$</sub> | <sub>Cosine similarity, embeddings, text vectors</sub> | <sub>Raw tabular features where per-feature comparability matters more</sub> |
+| Z-Score (`StandardScaler`) | $(x-\mu)/\sigma$ | Per feature column | General tabular ML, linear models, KNN, SVM, MLP, PCA | Extreme heavy-tail data without outlier handling | Medium |
+| Min-Max (`MinMaxScaler`) | $(x-x_{min})/(x_{max}-x_{min})$ | Per feature column to fixed range | Bounded-input models, some neural settings | Data with unstable extrema | High |
+| Robust (`RobustScaler`) | $(x-\text{median})/\text{IQR}$ | Per feature column robustly | Outlier-heavy tabular features | Settings where variance-based interpretation is central | Low-Medium |
+| L2 Norm (`Normalizer`) | $x/||x||_2$ | Per sample row | Cosine-style similarity spaces, text vectors | Most raw tabular tasks where feature comparability is key | N/A (row-wise) |
 
-GitHub note: This table compares the four scalers implemented in the project, focusing on what they transform, why that transformation is useful, and the failure modes you should expect before choosing one blindly.
+This first table is here on purpose: many readers need a direct decision aid before the deeper theory. It summarizes what each scaler transforms, what problem it is solving, and where it fails most often.
 
-| # | <sub>Model Family</sub> | <sub>Why Scale Matters</sub> | <sub>Expected Sensitivity</sub> | <sub>Reason</sub> |
-| --- | --- | --- | --- | --- |
-| 1 | <sub>Logistic Regression</sub> | <sub>Coefficient magnitudes and regularization strength depend on feature scale</sub> | <sub>High</sub> | <sub>Large-scale features can dominate optimization and penalty terms</sub> |
-| 2 | <sub>K-Nearest Neighbors</sub> | <sub>Distance calculations define the decision rule directly</sub> | <sub>Very high</sub> | <sub>One wide-range feature can overwhelm all neighbor searches</sub> |
-| 3 | <sub>RBF SVM</sub> | <sub>Kernel distance depends on scaled geometry</sub> | <sub>High</sub> | <sub>Unbalanced scales distort the effective margin and kernel radius</sub> |
-| 4 | <sub>Random Forest</sub> | <sub>Threshold splits are mostly scale-invariant</sub> | <sub>Low</sub> | <sub>Decision trees care about ordering more than magnitude units</sub> |
+### Table 2 - Model Family vs Scaling Sensitivity
 
-GitHub note: This model table is the mental shortcut for interpreting the benchmark. If a model is geometry-sensitive, you should expect scaling to change the result more substantially.
+| Model | Scaling Sensitivity | Why | Expected Effect of Good Scaling |
+| --- | --- | --- | --- |
+| Logistic Regression | High | Regularization and optimization are magnitude sensitive | Better convergence, more stable coefficients |
+| KNN | Very High | Distance directly defines neighbors | Large accuracy movement possible |
+| SVM (RBF) | High | Kernel distances and margin geometry depend on scale | Better class boundary quality |
+| MLP | High | Gradient flow and activation operating range are scale dependent | More stable training and often better generalization |
+| Random Forest | Low | Split thresholds are mostly unit-invariant | Usually small change |
 
-## What a Z-Score Means
+### Table 3 - When to Use and When Not to Use
 
-The z-score tells you how far a single observation is from the mean of its feature, measured in standard deviations. It is one of the simplest and most useful rescalings in statistics because it converts heterogeneous numeric columns into a common reference frame without discarding relative ordering.
+| Scaler | Use When | Avoid When | Practical Rule of Thumb |
+| --- | --- | --- | --- |
+| Z-Score | You want a strong default for mixed-unit tabular numeric data | Outliers are severe and untreated | Start here, then test robust scaling if tails are long |
+| Min-Max | Inputs should be bounded to [0,1] or similar | Min and max are unstable due to extreme points | Check percentile spread before committing |
+| Robust | Outliers are frequent and meaningful | You need direct variance-scale interpretation post-transform | Pair with boxplot or quantile diagnostics |
+| L2 Norm | Row direction matters more than column scale | You need per-feature statistical comparability | Use for embeddings/text, be cautious for medical tabular data |
 
-$$
-z = \frac{x - \mu}{\sigma}
-$$
+---
 
-Where:
+## Architecture and Data Flow
 
-- $x$ is the observed value.
-- $\mu$ is the feature mean estimated on the training data.
-- $\sigma$ is the feature standard deviation estimated on the training data.
-
-After transformation, each feature is centered near zero and scaled near unit variance. That does not force the feature to become perfectly Gaussian, and it does not remove outliers. What it does is put features on roughly comparable magnitudes, which is often enough to stabilize optimization and distance calculations.
-
-> [!NOTE]
-> Standardization is not the same as forcing a normal distribution. It aligns mean and variance, but skewness and heavy tails can remain.
-
-```mermaid
-flowchart TD
-    A[Raw feature value x] --> B[Subtract training mean mu]
-    B --> C[Divide by training std sigma]
-    C --> D[Z-score transformed value z]
-    D --> E[Feature now centered near 0]
-    D --> F[Feature variance near 1]
-```
-
-GitHub note: This diagram shows the direct transformation path used by StandardScaler. The key idea is that the mean and standard deviation come from the training split, not from the full dataset.
-
-## Architecture
-
-The repository uses a deliberately simple architecture so the preprocessing logic is easy to follow. Shared logic lives in one utility module. The demonstration script focuses on synthetic data and the formula. The comparison script focuses on reproducible model evaluation and output generation.
+The project architecture is deliberately small and explicit. Shared logic lives in one utilities module. One script demonstrates z-score behavior on synthetic mixed-scale data. Another script runs the comparative benchmark and writes tabular and visual artifacts.
 
 ```mermaid
 flowchart LR
-    A[src/utils.py] --> B[src/zscore_demo.py]
-    A --> C[src/compare_scalers.py]
-    B --> D[data/synthetic_data.csv]
+    A[src/zscore_demo.py] --> B[data/synthetic_data.csv]
+    C[src/compare_scalers.py] --> D[results/scaler_model_scores.csv]
     C --> E[results/scaler_comparison_table.csv]
-    C --> F[results/scaler_model_scores.csv]
-    C --> G[results/model_scores.png]
+    C --> F[results/model_scores.png]
+    C --> G[results/pca_projections.png]
+    C --> H[results/confusion_matrices_*.png]
+    I[src/utils.py] --> A
+    I --> C
 ```
 
-GitHub note: This architecture diagram shows the ownership of responsibilities. The utility layer handles data and evaluation primitives, while the two entry scripts create the educational outputs.
+### Table 4 - Architecture Responsibilities
 
-| # | <sub>Component</sub> | <sub>Responsibility</sub> | <sub>Why It Exists</sub> | <sub>Why Not Something Heavier</sub> |
-| --- | --- | --- | --- | --- |
-| 1 | <sub>utils.py</sub> | <sub>Reusable data generation, scaling, evaluation, and plotting</sub> | <sub>Avoids duplication across scripts</sub> | <sub>A full package layout would add ceremony without improving clarity here</sub> |
-| 2 | <sub>zscore_demo.py</sub> | <sub>Shows the math on synthetic data with interpretable columns</sub> | <sub>Makes the transformation concrete before benchmarking</sub> | <sub>A notebook is not necessary for a deterministic CLI demonstration</sub> |
-| 3 | <sub>compare_scalers.py</sub> | <sub>Benchmarks scalers across several classifiers</sub> | <sub>Connects preprocessing theory to predictive performance</sub> | <sub>We avoid a large experiment framework to keep focus on scaling</sub> |
-| 4 | <sub>results/</sub> | <sub>Stores generated CSV and figure artifacts</sub> | <sub>Separates outputs from source</sub> | <sub>Embedding results only in console output would be less reproducible</sub> |
-
-GitHub note: This architecture table explains the design boundaries of the project and why the implementation stays intentionally compact rather than introducing package overhead or notebook-only logic.
-
-## How the Experiment Works
-
-The benchmark script uses pipelines to ensure each scaler is fitted only on the training data. That is important because fitting the scaler before splitting would leak information from the test set into the preprocessing step. Leakage often produces deceptively strong metrics and is one of the most common mistakes in beginner ML workflows.
+| Component | What It Does | Why It Exists | Why Not More Complex Structure |
+| --- | --- | --- | --- |
+| `src/utils.py` | Data generation, scalers/models, evaluation, plotting | Centralizes reusable logic and prevents drift | A full package scaffold would add ceremony for a focused educational repo |
+| `src/zscore_demo.py` | Demonstrates z-score on synthetic data | Makes formulas concrete with readable features | Notebook-only approach can obscure deterministic CLI reproducibility |
+| `src/compare_scalers.py` | Runs benchmark and writes all outputs | Keeps experiment entrypoint simple and auditable | Heavy orchestration framework is unnecessary for this scale |
+| `results/` | Stores CSV and figures | Preserves reproducible artifacts from each run | Console-only output is harder to inspect and compare later |
 
 ```mermaid
 sequenceDiagram
-    participant D as Dataset
-    participant S as Train/Test Split
-    participant P as Pipeline
-    participant M as Model
-    participant R as Results
-    D->>S: Split features and labels
-    S->>P: Training data only
-    P->>P: Fit scaler on train set
-    P->>M: Train model on scaled train set
-    S->>P: Test features
-    P->>M: Transform test features with fitted scaler
-    M->>R: Predict and score accuracy
+    participant DS as Dataset
+    participant SPLIT as Train/Test Split
+    participant PIPE as Scaler+Model Pipeline
+    participant EVAL as Evaluator
+    participant OUT as Artifacts
+
+    DS->>SPLIT: Load features and target
+    SPLIT->>PIPE: Train subset
+    PIPE->>PIPE: Fit scaler on train only
+    PIPE->>PIPE: Fit model
+    SPLIT->>PIPE: Test subset
+    PIPE->>EVAL: Predict on transformed test set
+    EVAL->>OUT: Save scores and visuals
 ```
 
-GitHub note: This sequence diagram visualizes the leakage-safe pipeline. The fitted scaler state is learned once on the training set and reused during test transformation.
-
-| # | <sub>Step</sub> | <sub>What Happens</sub> | <sub>Why It Matters</sub> | <sub>Common Mistake Avoided</sub> |
-| --- | --- | --- | --- | --- |
-| 1 | <sub>Load dataset</sub> | <sub>The breast cancer dataset is loaded as pandas frames</sub> | <sub>Readable feature names help interpretation</sub> | <sub>Opaque arrays make debugging harder</sub> |
-| 2 | <sub>Split data</sub> | <sub>Data is partitioned with stratification and a fixed seed</sub> | <sub>Class balance and reproducibility are preserved</sub> | <sub>Unstratified splits can shift label proportions</sub> |
-| 3 | <sub>Fit scaler</sub> | <sub>Each scaler learns parameters from training features only</sub> | <sub>Prevents leakage</sub> | <sub>Fitting on all data before splitting</sub> |
-| 4 | <sub>Train model</sub> | <sub>Each classifier is trained inside a pipeline</sub> | <sub>Encapsulates preprocessing and learning together</sub> | <sub>Manual preprocessing paths drifting out of sync</sub> |
-| 5 | <sub>Evaluate</sub> | <sub>Accuracy is computed on the held-out test split</sub> | <sub>Measures generalization rather than memorization</sub> | <sub>Reporting train accuracy as if it were validation quality</sub> |
-
-GitHub note: This workflow table breaks the experiment into concrete operations so the reasoning behind the implementation is explicit rather than implied.
-
-## Results and Interpretation
-
-The exact values depend on the local scikit-learn version and environment, but the expected pattern is stable: z-score scaling tends to perform strongly for logistic regression, KNN, and RBF SVM, while the random forest score stays comparatively stable across scalers. That pattern lines up with both scikit-learn’s guidance and broader empirical studies showing that scale-sensitive models are strongly affected by preprocessing, whereas tree-based ensembles are much more robust.
-
-| # | <sub>Scaler</sub> | <sub>Mean Accuracy Across Models</sub> | <sub>High-Level Takeaway</sub> |
-| --- | --- | --- | --- |
-| 1 | <sub>Z-Score</sub> | <sub>0.9715</sub> | <sub>Best tied overall and strongest general-purpose default in this benchmark</sub> |
-| 2 | <sub>Robust</sub> | <sub>0.9715</sub> | <sub>Tied with z-score, suggesting mild outlier robustness can be competitive here</sub> |
-| 3 | <sub>Min-Max</sub> | <sub>0.9627</sub> | <sub>Still strong, but slightly weaker on average across the chosen models</sub> |
-| 4 | <sub>L2 Normalization</sub> | <sub>0.8925</sub> | <sub>Noticeably weaker for this tabular classification setting because row normalization solves a different problem</sub> |
-
-GitHub note: This table reports the benchmark snapshot generated by the repository in the current environment. It is intentionally near the interpretation section so readers can connect the narrative claims to concrete numbers.
-
-| # | <sub>Expected Pattern</sub> | <sub>Interpretation</sub> | <sub>Why It Happens</sub> |
-| --- | --- | --- | --- |
-| 1 | <sub>Z-score often leads or ties for best mean accuracy</sub> | <sub>Standardized variance supports balanced optimization</sub> | <sub>Regularized and distance-based models behave better when features share scale</sub> |
-| 2 | <sub>Min-max can be competitive</sub> | <sub>Bounded ranges still reduce dominance by large-magnitude features</sub> | <sub>But the transformation is more sensitive to extreme minimum and maximum values</sub> |
-| 3 | <sub>Robust scaling can help noisy features</sub> | <sub>Median and IQR reduce outlier leverage</sub> | <sub>Its benefit is strongest when outliers are genuinely distorting mean and variance</sub> |
-| 4 | <sub>L2 normalization is often weaker on raw tabular classification</sub> | <sub>Row-wise normalization changes sample geometry rather than feature comparability</sub> | <sub>That is useful for cosine-style similarity problems, less so for many structured numeric tasks</sub> |
-
-GitHub note: This interpretation table explains the benchmark pattern you should expect after running the scripts and connects each outcome to the mathematics of the corresponding scaler.
+```mermaid
+mindmap
+  root((Scaler Selection))
+    Data Properties
+      Outliers
+      Mixed units
+      Heavy tails
+      Bounded range needs
+    Model Type
+      Distance-based
+      Kernel-based
+      Gradient-based
+      Tree-based
+    Objective
+      Better convergence
+      Better geometry
+      Better interpretability
+      Leakage-safe reproducibility
+```
 
 ```mermaid
 flowchart TD
-    A[Large raw feature variance differences] --> B[Distance and optimization imbalance]
-    B --> C[Scaling changes geometry]
-    C --> D[Model response differs by algorithm family]
-    D --> E[Scale-sensitive models change more]
-    D --> F[Tree-based models change less]
+    A[Need feature preprocessing] --> B{Outliers strong?}
+    B -- Yes --> C[Try RobustScaler first]
+    B -- No --> D{Need bounded range?}
+    D -- Yes --> E[Try MinMaxScaler]
+    D -- No --> F{Distance or gradient model?}
+    F -- Yes --> G[Try StandardScaler]
+    F -- No --> H{Directional similarity objective?}
+    H -- Yes --> I[Try L2 Normalizer]
+    H -- No --> J[Test baseline and compare]
 ```
 
-GitHub note: This cause-and-effect diagram summarizes the central thesis of the repository: preprocessing alters geometry, and different algorithms respond to that geometry in different ways.
+```mermaid
+stateDiagram-v2
+    [*] --> RawData
+    RawData --> Split
+    Split --> FitScalerOnTrain
+    FitScalerOnTrain --> TrainModel
+    TrainModel --> PredictTest
+    PredictTest --> Metrics
+    Metrics --> CSVArtifacts
+    Metrics --> VisualArtifacts
+    CSVArtifacts --> [*]
+    VisualArtifacts --> [*]
+```
 
-| # | <sub>Scaler</sub> | <sub>Use When</sub> | <sub>Avoid When</sub> | <sub>Practical Tip</sub> |
+---
+
+## Algorithms, Formulas, and Why They Were Chosen
+
+The benchmark is designed to isolate scaling behavior rather than to maximize a leaderboard score. The selected methods represent different geometric and optimization assumptions so that scaling impact can be observed clearly.
+
+### Table 5 - Algorithms Included and Rationale
+
+| Algorithm | Family | Why Included | Why Not Replaced by Another |
+| --- | --- | --- | --- |
+| Logistic Regression | Linear, regularized | Canonical scale-sensitive baseline | More complex linear variants would reduce interpretability gain |
+| KNN | Instance-based distance learner | Strongly demonstrates distance distortion effects | Radius neighbors adds complexity without clearer pedagogy |
+| SVM (RBF) | Kernel method | Captures non-linear boundary sensitivity to feature scale | Linear SVM alone misses kernel geometry behavior |
+| Random Forest | Tree ensemble | Useful low-sensitivity contrast case | Gradient boosting could be added, but RF is simpler to explain |
+| MLPClassifier | Neural network | Demonstrates optimization sensitivity in gradient models | Deeper networks are unnecessary for the preprocessing objective |
+
+### Formula Reference
+
+| Method | Formula | Meaning |
+| --- | --- | --- |
+| Z-Score | $z=(x-\mu)/\sigma$ | Center to mean 0 and variance 1 per feature column |
+| Min-Max | $x'=(x-x_{min})/(x_{max}-x_{min})$ | Map each feature to bounded range |
+| Robust | $x'=(x-\tilde{x})/(Q_3-Q_1)$ | Use median and IQR to reduce outlier leverage |
+| L2 Norm | $x'=x/||x||_2$ | Normalize each sample vector length |
+| PCA Projection | $Z=XW$ where $W$ are top eigenvectors | Project transformed features to principal directions |
+
+Why these formulas were chosen: they are the exact transformations implemented by the scikit-learn preprocessing classes used in this project. This keeps theoretical explanation and executable code aligned, which is important for educational reproducibility.
+
+Why these over alternatives: power transforms, quantile transforms, and learned normalizers can also be useful, but they introduce additional assumptions and tuning overhead. For a first-principles study of scaling behavior, the current set gives clear, interpretable contrasts with minimal hidden complexity.
+
+## Where Z-Score Fits in Modern ML and AI Pipelines
+
+Z-score scaling is a preprocessing step. In classical supervised learning, it is fit after the train-validation split is created and before model fitting. In leakage-safe workflows, the scaler is learned on the training portion only, then reused to transform validation and test inputs. That means z-score is not a post-training reporting step and not an online weight update rule. It is a data representation step that changes the geometry seen by the optimizer.
+
+For logistic regression, z-score is often one of the highest-value preprocessing steps because both optimization and regularization are magnitude-sensitive. Without scaling, one high-variance feature can dominate gradient updates and distort coefficient shrinkage. With scaling, coefficients become more comparable, optimization tends to be better conditioned, and regularization behaves closer to the intended design.
+
+For KNN and RBF-SVM, z-score controls distance geometry. For MLP, it stabilizes optimization and makes learning-rate behavior less erratic. For tree ensembles, gains are usually modest because split thresholds are mostly scale-invariant.
+
+Transformers and attention-based architectures are different. In NLP and modern deep architectures, internal normalization usually uses LayerNorm or related mechanisms inside the model rather than external z-scoring of token embeddings. However, when transformers are applied to tabular numeric features, external feature scaling can still matter at input stage, especially if features have very different units and no strong learned embedding normalization is in place.
+
+### Table 6 - Where Z-Score Happens in the ML Lifecycle
+
+| Lifecycle Stage | Is Z-Score Used Here? | What Happens | Why |
+| --- | --- | --- | --- |
+| Raw data ingest | Optional pre-check only | Inspect units, outliers, missingness | Decide if scaling is needed and safe |
+| Train/validation split | Yes, boundary is defined here | Split first, then fit scaler on train only | Prevent leakage |
+| Model training | Yes, via pipeline transform | Train model on scaled train inputs | Improve optimization and geometry |
+| Validation/testing | Yes, transform only | Apply fitted train scaler to val/test | Comparable and leakage-safe evaluation |
+| Inference serving | Yes, same fitted scaler | Transform live input before model prediction | Keep training-serving representation consistent |
+| Monitoring/drift handling | Conditional refit | Re-estimate scaler on retraining windows | Adapt to distribution shift |
+
+### Table 7 - Logistic Regression vs Transformer Context for Normalization
+
+| Topic | Logistic Regression | Transformer/Attention Models |
+| --- | --- | --- |
+| External z-score on input features | Commonly very useful | Depends on modality and architecture |
+| Why normalization matters | Regularization and gradient conditioning | Stable hidden-state dynamics and optimization |
+| Typical normalization mechanism | `StandardScaler` before model | LayerNorm/RMSNorm inside model blocks |
+| If data drifts | Refit scaler and retrain/evaluate | Update full training pipeline, often including tokenizer/feature stack |
+| Best practice summary | Scale numeric inputs by default, then validate | Follow architecture defaults, add input scaling for tabular numeric pipelines when needed |
+
+### Table 8 - Drift and Re-Scaling Decisions
+
+| Drift Signal | Suggested Action | Why |
+| --- | --- | --- |
+| Mean shift in key numeric features | Re-estimate scaler on updated train window | Old center no longer representative |
+| Variance inflation/deflation | Refit scaler and re-run validation | Standard deviation baseline changed |
+| Accuracy drop with stable labels | Check preprocessing parity first | Training-serving scaler mismatch is common |
+| Feature engineering changed | Rebuild scaler + retrain from split boundary | Geometry changed, old scaler is invalid |
+| Label-policy changes | Full pipeline re-evaluation | Metric interpretation may no longer match objective |
+
+---
+
+## Experimental Design
+
+The benchmark now has two complementary tracks. The first is a holdout split benchmark used for confusion matrices and visual diagnostics. The second is a research-strength repeated stratified cross-validation benchmark used for more stable central tendency estimates and confidence intervals.
+
+Datasets used:
+
+- `breast_cancer` from scikit-learn (`load_breast_cancer`)
+- `wine` from scikit-learn (`load_wine`)
+
+Cross-validation protocol:
+
+- `RepeatedStratifiedKFold` with 5 folds and 5 repeats
+- total of 25 validation scores per scaler-model-dataset combination
+- 95% confidence interval estimated as $\bar{x} \pm 1.96 \cdot s / \sqrt{n}$
+
+### Table 9 - Step-by-Step Experiment Process
+
+| Step | What Happens | Why Needed | Failure Mode If Skipped |
+| --- | --- | --- | --- |
+| 1 | Load features and labels | Establish consistent benchmark data | Non-comparable experiments |
+| 2 | Run holdout split benchmark | Create per-model diagnostics | No confusion matrix/PCA context |
+| 3 | Fit scaler on train only | Prevent leakage | Inflated evaluation metrics |
+| 4 | Train model on transformed train data | Learn decision function in scaled space | Mismatched transformation behavior |
+| 5 | Predict and score holdout test | Evaluate a concrete split | Train-only optimism |
+| 6 | Run repeated stratified CV on two datasets | Improve estimate stability | Over-trusting one split |
+| 7 | Compute CI bands from repeated scores | Quantify uncertainty | Point estimate without uncertainty |
+| 8 | Save detailed and summary CSV tables | Make analysis reproducible | Lost traceability |
+| 9 | Save plots (bar, PCA, confusion) | Add geometric and error diagnostics | Harder interpretation from numbers alone |
+
+### Table 10 - Artifacts Generated and How to Read Them
+
+| Artifact | Type | What It Tells You | Primary Audience |
+| --- | --- | --- | --- |
+| `results/scaler_model_scores.csv` | Detailed table | Accuracy for each scaler-model pair | Researchers comparing pair behavior |
+| `results/scaler_comparison_table.csv` | Summary table | Mean accuracy by scaler | Readers choosing a baseline scaler |
+| `results/scaler_model_scores_cv.csv` | Repeated-CV detailed table | Mean/std/CI per dataset-scaler-model | Research-style analysis and uncertainty checks |
+| `results/scaler_dataset_summary_cv.csv` | Repeated-CV dataset summary | Mean accuracy across models by dataset and scaler | Cross-dataset scaler ranking |
+| `results/model_scores.png` | Grouped bar chart | Relative ranking by model/scaler | Quick visual comparison users |
+| `results/pca_projections.png` | PCA scatter grid | Class separation geometry after scaling | Users diagnosing feature-space structure |
+| `results/confusion_matrices_*.png` | Confusion matrix grids | Error type distribution per model and scaler | Users interested in false positives/negatives |
+
+---
+
+## Results and Interpretation
+
+The current run in this repository produced the following holdout and repeated-CV summaries.
+
+### Table 11 - Holdout Mean Accuracy by Scaler (Current Run)
+
+| Rank | Scaler | Mean Accuracy |
+| --- | --- | --- |
+| 1 | Robust | 0.9684 |
+| 2 | Z-Score | 0.9667 |
+| 3 | Min-Max | 0.9632 |
+| 4 | L2 Norm | 0.9018 |
+
+Although robust scaling is the top average in this run, z-score and robust are very close. The key insight is not a single winner for every dataset. The key insight is that scaler choice changes performance meaningfully for distance and gradient models, while tree-based performance is comparatively stable.
+
+### Table 12 - Per-Model Best vs Worst Scaler (Current Run)
+
+| Model | Best Scaler (Accuracy) | Worst Scaler (Accuracy) | Gap |
+| --- | --- | --- | --- |
+| Logistic Regression | Z-Score / Robust (0.9825) | L2 Norm (0.7895) | 0.1930 |
+| KNN | Z-Score / Robust (0.9737) | L2 Norm (0.9123) | 0.0614 |
+| SVM (RBF) | Z-Score / Min-Max / Robust (0.9825) | L2 Norm (0.9298) | 0.0527 |
+| MLP | Min-Max (0.9649) | L2 Norm (0.9386) | 0.0263 |
+| Random Forest | Z-Score / Min-Max / Robust (0.9474) | L2 Norm (0.9386) | 0.0088 |
+
+Interpretation: the largest gap appears in logistic regression, which is expected because regularization and optimization are highly scale-sensitive. Random forest shows the smallest gap, consistent with the split-based nature of tree ensembles.
+
+### Table 13 - Full Scoreboard (Current Run)
+
+| Scaler | Logistic Regression | KNN | SVM (RBF) | Random Forest | MLP |
+| --- | --- | --- | --- | --- | --- |
+| Z-Score | 0.9825 | 0.9737 | 0.9825 | 0.9474 | 0.9474 |
+| Min-Max | 0.9561 | 0.9649 | 0.9825 | 0.9474 | 0.9649 |
+| Robust | 0.9825 | 0.9737 | 0.9825 | 0.9474 | 0.9561 |
+| L2 Norm | 0.7895 | 0.9123 | 0.9298 | 0.9386 | 0.9386 |
+
+The PCA and confusion-matrix outputs add context that raw accuracy cannot provide. PCA helps inspect class separation under each scaling regime. Confusion matrices reveal whether gains come from fewer false positives, fewer false negatives, or a balanced improvement.
+
+### Table 14 - Repeated-CV Cross-Dataset Summary (Mean Across Models)
+
+| Dataset | Best Scaler | Mean Accuracy | 2nd | Mean Accuracy | 3rd | Mean Accuracy | 4th | Mean Accuracy |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| breast_cancer | zscore | 0.9705 | robust | 0.9696 | minmax | 0.9679 | l2_norm | 0.8944 |
+| wine | zscore | 0.9804 | minmax | 0.9799 | robust | 0.9784 | l2_norm | 0.7826 |
+
+### Table 15 - Example Repeated-CV Confidence Intervals (Selected Rows)
+
+| Dataset | Scaler | Model | Mean Accuracy | 95% CI |
 | --- | --- | --- | --- | --- |
-| 1 | <sub>Z-Score</sub> | <sub>You need a strong default for classical ML on numeric tabular data</sub> | <sub>Outliers are severe and untreated</sub> | <sub>Pair with outlier inspection, not blind trust</sub> |
-| 2 | <sub>Min-Max</sub> | <sub>You want bounded inputs for a downstream learner</sub> | <sub>Extremes are unstable or noisy</sub> | <sub>Check whether a few extreme values compress the rest of the feature</sub> |
-| 3 | <sub>Robust</sub> | <sub>Your median is more trustworthy than your mean</sub> | <sub>You need variance-based interpretation after scaling</sub> | <sub>Use when boxplots show long tails or obvious anomalies</sub> |
-| 4 | <sub>L2</sub> | <sub>Cosine similarity or vector direction matters most</sub> | <sub>You need per-feature standardization</sub> | <sub>Think of documents or embeddings, not generic business tabular features</sub> |
+| breast_cancer | robust | logistic_regression | 0.9793 | [0.9745, 0.9840] |
+| breast_cancer | zscore | mlp | 0.9743 | [0.9692, 0.9794] |
+| wine | zscore | logistic_regression | 0.9854 | [0.9790, 0.9918] |
+| wine | minmax | svm_rbf | 0.9888 | [0.9825, 0.9951] |
+| wine | l2_norm | svm_rbf | 0.6202 | [0.5982, 0.6421] |
 
-GitHub note: This decision table is meant to be operational. It converts the benchmark findings into concrete scaler selection guidance for future projects.
+> [!WARNING]
+> A single random split is useful for demonstration but not enough for publication-level claims. For stronger inference, extend this repo with repeated stratified cross-validation and confidence intervals.
 
-## Tech Stack
+> [!TIP]
+> If model selection risk is high, optimize based on task-specific error costs rather than accuracy alone, and read confusion matrices first.
 
-The stack is intentionally conservative. This is not a deep learning project, a data engineering pipeline, or an experiment tracking platform. The goal is to make the scaling logic transparent, portable, and easy to extend.
+---
 
-| # | <sub>Tool</sub> | <sub>Role in the Project</sub> | <sub>Why This Choice</sub> | <sub>Why Not an Alternative</sub> |
-| --- | --- | --- | --- | --- |
-| 1 | <sub>Python</sub> | <sub>Main implementation language</sub> | <sub>Ubiquitous for ML education and experimentation</sub> | <sub>R or Julia would work, but would reduce accessibility for typical scikit-learn users</sub> |
-| 2 | <sub>NumPy</sub> | <sub>Numeric array operations</sub> | <sub>Fast, standard, foundational</sub> | <sub>Pure Python loops would obscure the math and run slower</sub> |
-| 3 | <sub>pandas</sub> | <sub>Readable tabular manipulation and CSV output</sub> | <sub>Named columns make summaries easy to interpret</sub> | <sub>Raw arrays would be less descriptive in outputs</sub> |
-| 4 | <sub>scikit-learn</sub> | <sub>Scalers, datasets, pipelines, and models</sub> | <sub>Provides battle-tested preprocessing APIs and leakage-safe workflows</sub> | <sub>Hand-rolled implementations are more error-prone for benchmarking</sub> |
-| 5 | <sub>matplotlib</sub> | <sub>Static result visualization</sub> | <sub>Stable, widely available, easy to save in CI or local runs</sub> | <sub>Interactive plotting libraries are unnecessary for this artifact</sub> |
+## How to Run
 
-GitHub note: This stack table documents the technical choices behind the repository and makes clear that the toolchain was optimized for reproducibility and clarity rather than novelty.
-
-## Run the Project
-
-Install dependencies and execute the two scripts from the repository root.
+Use a clean virtual environment and run both scripts from project root:
 
 ```bash
 python3 -m venv .venv
@@ -234,119 +387,160 @@ python src/zscore_demo.py
 python src/compare_scalers.py
 ```
 
-After the scripts run, you should have:
+### Table 16 - Command Reference
 
-- `data/synthetic_data.csv`
-- `results/scaler_comparison_table.csv`
-- `results/scaler_model_scores.csv`
-- `results/model_scores.png`
-
-> [!WARNING]
-> If you compare scalers outside a pipeline and manually fit them before the train-test split, the benchmark becomes invalid because the preprocessing step has already observed the test distribution.
-
-## Detailed Guidance
-
-### Why StandardScaler Was Chosen as the Baseline
-
-StandardScaler is the baseline because it matches the theoretical story the project is trying to teach and because it is the default practical choice for a large class of numeric machine learning problems. It centers each feature independently and scales by the training standard deviation, which makes it a natural companion for regularized linear models, margin-based methods, and algorithms where Euclidean distance or covariance structure matters.
-
-We did not choose min-max scaling as the baseline because its dependence on observed extrema makes it fragile when rare extreme values are present. We did not choose robust scaling as the default because although it is excellent under outliers, it is more specialized and slightly less intuitive for first-principles explanation. We did not choose L2 normalization because it addresses a different objective: normalizing sample vectors rather than making feature columns comparable.
-
-### Why These Models Were Chosen
-
-The model set is intentionally mixed. Logistic regression and RBF SVM represent optimization-sensitive learners. KNN represents a geometry-sensitive learner whose behavior is easy to explain visually. Random forest serves as a useful contrast case because it reminds the reader that not every model benefits from every preprocessing step.
-
-This project avoids including too many models because the goal is explanation, not exhaustive benchmarking. A four-model comparison is large enough to show the main scaling behaviors and small enough to keep the code understandable. If you want to extend the benchmark later, the most natural additions are MLPClassifier for another gradient-based perspective and PCA-based experiments for unsupervised geometry effects.
-
-### Why the Breast Cancer Dataset Was Chosen
-
-The built-in breast cancer dataset from scikit-learn is a pragmatic choice. It is numeric, well-known, medium-sized, and requires no external download pipeline. That makes the project easier to run on a fresh machine and keeps the repository stable over time. It also includes features with different scales and distributions, which makes scaler comparisons meaningful without requiring a custom ETL layer.
-
-Using a built-in dataset also reduces repository complexity. The learning objective is preprocessing and model response, not data acquisition. By removing external downloads, the project can focus on the part that matters: how scaling changes downstream performance.
-
-```mermaid
-mindmap
-  root((Scaler choice))
-    Data shape
-      Outliers present
-      Mixed units
-      Range constraints
-    Model family
-      Distance based
-      Kernel based
-      Linear regularized
-      Tree ensemble
-    Objective
-      Better convergence
-      Fair feature weighting
-      Stable geometry
-      Lower leakage risk
-```
-
-GitHub note: This decision mind map ties together the three variables that actually determine scaler choice in practice: the data, the model, and the optimization objective.
-
-## References
-
-The project content is aligned with official documentation and recent literature on scaling-sensitive learning. The references below include both implementation guidance and research context.
-
-| # | <sub>Reference</sub> | <sub>Why It Matters Here</sub> |
+| Command | Output | Why You Run It |
 | --- | --- | --- |
-| 1 | <sub>scikit-learn User Guide - Preprocessing data</sub> | <sub>Primary implementation reference for StandardScaler, MinMaxScaler, RobustScaler, and Normalizer</sub> |
-| 2 | <sub>scikit-learn Example - Importance of Feature Scaling</sub> | <sub>Shows how scaling changes KNN, PCA, and logistic regression behavior</sub> |
-| 3 | <sub>Pinheiro et al., 2025, The Impact of Feature Scaling in Machine Learning</sub> | <sub>Recent broad empirical evidence that scaling sensitivity differs sharply by model family</sub> |
-| 4 | <sub>Kaufman et al., 2011, Leakage in Data Mining</sub> | <sub>Grounds the repository's insistence on leakage-safe preprocessing</sub> |
-| 5 | <sub>Sujon et al., 2024, When to Use Standardization and Normalization</sub> | <sub>Supports the practical distinction between standardization and normalization</sub> |
-| 6 | <sub>Singh and Singh, 2020, Investigating the Impact of Data Normalization</sub> | <sub>Provides additional comparative evidence on how preprocessing alters classification behavior</sub> |
-| 7 | <sub>Hastie, Tibshirani, and Friedman, 2009, The Elements of Statistical Learning</sub> | <sub>Classical statistical learning context for regularization, geometry, and feature representation</sub> |
-| 8 | <sub>Raschka, 2020, Model Evaluation, Model Selection, and Algorithm Selection</sub> | <sub>Useful background for understanding why hold-out evaluation and reproducibility matter</sub> |
+| `python src/zscore_demo.py` | Synthetic dataset and z-score summaries | Understand the transformation before model benchmarking |
+| `python src/compare_scalers.py` | CSV score tables and all figures | Evaluate practical model impact of each scaler |
 
-GitHub note: This reference table separates implementation sources from methodological sources so the repository remains useful both as a coding example and as a starting point for deeper reading.
+---
 
-Primary links:
+## GitHub Publishing and Community Health
 
-- scikit-learn preprocessing guide: https://scikit-learn.org/stable/modules/preprocessing.html
-- scikit-learn StandardScaler API: https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.StandardScaler.html
-- scikit-learn feature scaling example: https://scikit-learn.org/stable/auto_examples/preprocessing/plot_scaling_importance.html
-- Pinheiro et al. 2025 arXiv version: https://arxiv.org/abs/2506.08274
-- Kapoor and Narayanan on leakage and reproducibility: https://www.sciencedirect.com/science/article/pii/S2666389923001599
-- Singh and Singh on normalization impact: https://www.sciencedirect.com/science/article/pii/S1568494619302947
-- Sujon et al. IEEE Access abstract entry cited by Pinheiro et al.: https://doi.org/10.1109/ACCESS.2024.3463978
-- Raschka on evaluation and selection: https://arxiv.org/abs/1811.12808
+The repository now includes a complete baseline set of GitHub publishing and collaboration files so external contributors can onboard quickly and follow a consistent workflow.
 
-## API Reference
+### Table 17 - Publishing Files and Purpose
+
+| File | Purpose |
+| --- | --- |
+| `LICENSE` | Defines reuse and distribution rights (MIT) |
+| `CONTRIBUTING.md` | Contributor workflow, expectations, and validation steps |
+| `.github/ISSUE_TEMPLATE/bug_report.md` | Structured bug reports with reproducible context |
+| `.github/ISSUE_TEMPLATE/feature_request.md` | Structured enhancement proposals |
+| `.github/pull_request_template.md` | Standardized PR context and validation checklist |
+| `.github/RELEASE_CHECKLIST.md` | Pre-release quality, reproducibility, and documentation checks |
+
+---
+
+## Practical Tips, Notes, and Gotchas
+
+### Table 18 - Troubleshooting and Validation Checklist
+
+| Symptom | Likely Cause | What to Check |
+| --- | --- | --- |
+| Very high unexpected scores | Data leakage | Confirm scaler fit is inside pipeline and train-only |
+| KNN performs poorly | Feature geometry imbalance | Compare z-score vs min-max vs robust first |
+| MLP unstable results | Insufficient scaling or max_iter too low | Inspect scaler choice, random state, and convergence warnings |
+| Similar tree scores across scalers | Expected behavior | Tree split logic is often scale-insensitive |
+| PCA plot looks compressed | High-dimensional variance concentrated | Check explained variance ratio in plot titles |
+
+> [!IMPORTANT]
+> Preprocessing decisions are algorithm decisions. Changing scaler means changing the hypothesis space geometry seen by your learner.
+
+> [!NOTE]
+> L2 normalization is not inherently worse. It is simply optimized for a different objective than most tabular classification pipelines.
+
+### Recommended Extensions
+
+- Add precision, recall, F1, and ROC-AUC to complement accuracy.
+- Add paired significance testing across scalers for each model.
+- Add calibration curves for probability-quality inspection.
+- Add a third dataset with stronger covariate shift.
+
+---
+
+## Collapsible API Reference
 
 <details>
-<summary>Script entry points and utility functions</summary>
+<summary><strong>Script Entry Points</strong></summary>
 
-### `python src/zscore_demo.py`
+### `src/zscore_demo.py`
 
-Runs the synthetic data demonstration. It generates a mixed-scale dataset, saves it to `data/synthetic_data.csv`, applies z-score standardization, and prints summary statistics before and after scaling.
+This script generates synthetic mixed-scale numeric data, applies z-score standardization, and prints before/after descriptive summaries. It is intended as the conceptual bridge between formula-level understanding and pipeline-level benchmarking.
 
-### `python src/compare_scalers.py`
+### `src/compare_scalers.py`
 
-Runs the scaler comparison benchmark. It evaluates z-score scaling, min-max scaling, robust scaling, and L2 normalization across logistic regression, KNN, RBF SVM, and random forest classifiers. It then saves a detailed score table, an aggregated score table, and a grouped bar chart.
-
-### `generate_synthetic_data(samples=150)`
-
-Creates a synthetic numeric dataset with heterogeneous scales and a small number of injected outliers so that the reader can see why robust alternatives sometimes matter.
-
-### `zscore_frame(data)`
-
-Fits `StandardScaler` to a pandas DataFrame and returns both the transformed DataFrame and the fitted scaler object.
-
-### `evaluate_scalers()`
-
-Loads the breast cancer dataset, performs a stratified train-test split, builds pipelines for each scaler-model pair, computes accuracy, and returns both a detailed result table and a mean summary by scaler.
-
-### `plot_model_scores(results)`
-
-Builds the bar chart stored at `results/model_scores.png` so the benchmark can be reviewed visually rather than only as CSV output.
+This script runs the full scaler-model benchmark, saves detailed and summary CSV results, creates grouped bar score plots, writes PCA projection visuals, and exports confusion matrix grids for each scaler.
 
 </details>
 
-> [!TIP]
-> A good next extension is to add `MLPClassifier` and a PCA experiment. Those two additions make the interaction between scaling, optimization, and dimensionality reduction even more obvious.
+<details>
+<summary><strong>Core Utility Functions in `src/utils.py`</strong></summary>
 
-## License
+| Function | Purpose | Inputs | Outputs |
+| --- | --- | --- | --- |
+| `generate_synthetic_data(samples=150)` | Build mixed-scale synthetic numeric data with mild outliers | sample count | pandas DataFrame |
+| `save_synthetic_data(data, output_path=None)` | Persist synthetic dataset to CSV | DataFrame, optional path | output file path |
+| `zscore_frame(data)` | Fit and apply z-score transform | DataFrame | transformed DataFrame and fitted scaler |
+| `build_scalers()` | Define scaler registry | none | dict of scaler instances |
+| `build_models()` | Define model registry | none | dict of model instances |
+| `evaluate_scalers()` | Run leakage-safe scaler-model benchmark | none | `BenchmarkArtifacts` dataclass |
+| `evaluate_scalers_with_cv(folds=5, repeats=5)` | Run repeated stratified CV across breast cancer and wine datasets | fold/repeat counts | detailed CV table and dataset summary table |
+| `save_benchmark_tables(artifacts)` | Save detailed and mean score tables | artifacts | two CSV paths |
+| `save_cv_tables(detailed, summary)` | Save repeated-CV detailed/summary tables | two DataFrames | two CSV paths |
+| `plot_model_scores(results)` | Save grouped accuracy bar chart | detailed results DataFrame | PNG path |
+| `plot_pca_projections(artifacts)` | Save 2D PCA per-scaler projection figure | artifacts with scaled test data | PNG path |
+| `plot_confusion_matrices(artifacts)` | Save one confusion-matrix grid per scaler | artifacts with predictions and labels | list of PNG paths |
 
-This repository is suitable for educational and demonstration use. Add the license of your choice before publishing publicly if you plan to distribute or extend the project.
+</details>
+
+<details>
+<summary><strong>Data Structures</strong></summary>
+
+`BenchmarkArtifacts` includes:
+
+- `results_table`: detailed per-scaler per-model accuracy rows.
+- `summary_table`: mean accuracy by scaler.
+- `predictions`: dictionary keyed by `(scaler_name, model_name)`.
+- `y_test`: held-out labels for diagnostics.
+- `scaled_test`: transformed test features by scaler for PCA plotting.
+
+</details>
+
+---
+
+## Tech Stack and Architecture Rationale
+
+This stack is intentionally conservative so the experiment remains transparent and reproducible on most systems. The goal is not to introduce framework novelty. The goal is to make preprocessing behavior legible and easy to extend.
+
+### Table 19 - Tech Stack Rationale
+
+| Tool | Role | Why This Choice | Alternative and Why Not Default |
+| --- | --- | --- | --- |
+| Python | Core language | Ubiquitous for ML education and prototyping | Other languages are viable but reduce accessibility for scikit-learn users |
+| NumPy | Numerical operations | Efficient vectorized math foundation | Pure Python loops are slower and noisier |
+| pandas | Tabular handling and CSV output | Clear column semantics and easy summaries | Raw arrays reduce readability |
+| scikit-learn | Scalers, models, pipelines, metrics | Mature, standardized ML APIs with leakage-safe patterns | Hand-rolled pipelines are error-prone |
+| matplotlib | Static reproducible plots | Stable, CI-friendly, widely installed | Interactive plotting is unnecessary for this benchmark |
+
+---
+
+## References: Articles and arXiv
+
+The references below include implementation documentation, method background, and research discussions relevant to scaling, optimization stability, and leakage-safe evaluation.
+
+### Table 20 - Reference Map
+
+| Type | Citation | Why Relevant |
+| --- | --- | --- |
+| Documentation | scikit-learn preprocessing guide | Primary implementation semantics for all scalers used |
+| Documentation | scikit-learn scaling importance example | Demonstrates practical impact on KNN, PCA, and linear models |
+| arXiv | Ioffe and Szegedy (2015), Batch Normalization, arXiv:1502.03167 | Broader perspective on normalization and optimization stability |
+| arXiv | Santurkar et al. (2018), How Does Batch Normalization Help Optimization?, arXiv:1805.11604 | Explains optimization effects of normalization in deep learning context |
+| arXiv | Kapoor and Narayanan (2022), Leakage and the Reproducibility Crisis in ML-based Science, arXiv:2207.07048 | Motivates strict leakage controls in benchmark design |
+| Book | Hastie, Tibshirani, Friedman (2009), The Elements of Statistical Learning | Statistical learning foundations for geometry and regularization |
+| Article | Singh and Singh (2020), Information Sciences, normalization impact study | Comparative perspective on normalization effects |
+| arXiv | Raschka (2018), Model Evaluation, Model Selection, and Algorithm Selection in ML, arXiv:1811.12808 | Evaluation design and reproducibility context |
+
+Direct links:
+
+- https://scikit-learn.org/stable/modules/preprocessing.html
+- https://scikit-learn.org/stable/auto_examples/preprocessing/plot_scaling_importance.html
+- https://arxiv.org/abs/1502.03167
+- https://arxiv.org/abs/1805.11604
+- https://arxiv.org/abs/2207.07048
+- https://arxiv.org/abs/1811.12808
+- https://www.sciencedirect.com/science/article/pii/S1568494619302947
+
+---
+
+## Final Notes
+
+This README is intentionally detailed because preprocessing is often under-documented in ML repos even though it can be one of the highest-leverage decisions in a pipeline. If you use this project as a base for publishing or research, the next strongest upgrade is cross-validation with uncertainty reporting, followed by an additional dataset with a different outlier and scale profile.
+
+If you want, the next pass can add:
+
+1. A publication-style evaluation section with repeated CV and confidence intervals.
+2. A benchmark protocol table with explicit train/validation/test governance.
+3. A reproducibility checklist aligned to ML reproducibility reporting norms.

@@ -1,0 +1,17 @@
+scaler,model,accuracy
+zscore,knn,0.9736842105263158
+robust,knn,0.9736842105263158
+minmax,knn,0.9649122807017544
+l2_norm,knn,0.9122807017543859
+zscore,logistic_regression,0.9824561403508771
+robust,logistic_regression,0.9824561403508771
+minmax,logistic_regression,0.956140350877193
+l2_norm,logistic_regression,0.7894736842105263
+zscore,random_forest,0.9473684210526315
+minmax,random_forest,0.9473684210526315
+robust,random_forest,0.9473684210526315
+l2_norm,random_forest,0.9385964912280702
+zscore,svm_rbf,0.9824561403508771
+minmax,svm_rbf,0.9824561403508771
+robust,svm_rbf,0.9824561403508771
+l2_norm,svm_rbf,0.9298245614035088
